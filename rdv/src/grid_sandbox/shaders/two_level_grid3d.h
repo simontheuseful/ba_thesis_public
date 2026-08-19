@@ -105,7 +105,7 @@ FORWARD {
 
     // check if bottom left and top right are in the same block
     // if so enter the fast implementation where only one lookup is needed
-    if (macro0 == macro1) {
+    if (false) { // macro0 == macro1, this is something that could be very beneficient for my thesis as this branch made the code slower
 
         // get the block pointer and check if it is empty, if so return early
         bool empty;
