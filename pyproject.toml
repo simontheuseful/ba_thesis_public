@@ -1,0 +1,11 @@
+[project]
+name = "ba-thesis"
+version = "0.1.0"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "blosc>=1.11.4",
+    "cffi>=2.0.0",
+    "matplotlib>=3.11.0",
+    "pywin32>=312",
+    "warp-lang>=1.16.0",
+]

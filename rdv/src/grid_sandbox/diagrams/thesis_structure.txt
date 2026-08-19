@@ -1,0 +1,114 @@
+# THESIS STRUCTURE + RESEARCH NOTES
+
+## GOAL, MAIN QUESTION, EXPECTED CONCLUSION
+
+**GOAL:**
+To empirically compare the computational and memory efficiency of three GPU volumetric grid representations (Dense, Two-Level Sparse, and Tree/NanoVDB) within a shared pipeline. The evaluation focuses strictly on how these structures handle memory cache coherence under different sampling scenarios (uniform, grid, and ray coherent) and their effectiveness in space skipping (DDA) for empty volume regions.
+
+**MAIN THESIS QUESTION:**
+How does the memory access pattern (cache coherence) of a fully hierarchical tree (NanoVDB) compare to a flat Dense grid and a Two-Level sparse grid? Furthermore, does the hierarchical complexity of NanoVDB pay off over a simpler Two-Level architecture when utilizing space skipping for rendering, given the hardware constraints of modern GPUs?
+
+**EXPECTED CONCLUSION:**
+*   **Memory Coherence:** For highly coherent access (grid/linear), Dense and Two-Level grids perform identically, perfectly utilizing the GPU's L1 cache, while NanoVDB suffers from tree-traversal overhead. For uncoherent access (uniform random), Two-Level outshines both by enabling early exits via O(1) macro-grid lookups, avoiding the deep O(log n) VRAM fetches of NanoVDB and the guaranteed cache misses of the Dense grid.
+*   **Space Skipping:** The Two-Level grid provides the optimal "sweet spot" for moderate-resolution volumes. It achieves memory compression comparable to a tree structure while delivering significantly faster space skipping (DDA) rendering times due to its flat indirection layer, avoiding the heavy register spilling and branch divergence associated with hierarchical tree traversals.
+
+---
+
+## 1. INTRODUCTION
+
+### 1.1 Problem Statement and Motivation
+*   Why volumetric rendering is computationally expensive (per-sample cost scales with resolution).
+*   The critical role of GPU memory bandwidth and L1/L2 cache limits.
+*   Why the choice of grid representation (space partitioning) dictates rendering efficiency.
+
+### 1.2 Goals and Scope of the Thesis
+*   State the efficiency comparison between Dense, Sparse, and Tree structures.
+*   Explicitly narrow the scope: the thesis focuses strictly on **space skipping**, excluding integration or delta-tracking problems.
+
+### 1.3 Outline of the Thesis
+*   Roadmap of the chapters.
+
+---
+
+## 2. BACKGROUND AND RELATED WORK
+
+### 2.1 GPU Architecture and Memory Coherence
+*   Streaming Multiprocessors, Warps, and Warp Divergence.
+*   The memory hierarchy (VRAM vs. L1/L2 Cache) and what "cache coherence" means for volumetric sampling.
+
+### 2.2 Volumetric Grid Representations
+*   **Dense Grids:** O(n^3) memory cost, direct array mapping.
+*   **Sparse / Two-Level Grids:** Tile/brick-based approaches (macro-cells and block pools). *Include Lefohn or similar proper citations here.*
+*   **Tree-Based Structures (VDB/NanoVDB):** The concept of hierarchical space partitioning, root/internal/leaf nodes.
+
+### 2.3 Techniques for Space Skipping
+*   The theory of empty-space skipping to avoid integrating over zero-density regions.
+*   Digital Differential Analyzer (DDA) algorithm for voxel traversal.
+*   Hierarchical DDA (HDDA) and the use of Majorants / Macro-Cells to leap over varying sizes of empty space.
+
+---
+
+## 3. METHODOLOGY
+
+### 3.1 Overview and Pipeline Integration
+*   The `rdv` rendering framework and the shared fixed-step transmittance estimator.
+*   Hardware/Software benchmarking setup (measuring batch throughput to isolate GPU execution time from CPU dispatch overhead).
+
+### 3.2 Implementation of Grid Structures
+*   **Dense Grid:** Flat 3D array layout and hardware trilinear sampling.
+*   **Two-Level Sparse Grid:** Bit-shifting logic for macro-grid to block-pool indirection.
+*   **NanoVDB:** Adaptation to the `PNanoVDB` GLSL subset, resolving the `inout` struct register-spilling overhead via macro inlining.
+
+### 3.3 Space Skipping Implementations
+*   **Two-Level DDA:** Utilizing the macro-grid as a structural majorant. Ray-AABB intersection logic for skipping empty 8x8x8 blocks.
+*   **NanoVDB HDDA:** Implementing hierarchical skipping based on `pnanovdb_readaccessor_get_dim` (structural sparsity) rather than relying on potentially flawed per-voxel active bitmasks.
+
+---
+
+## 4. RESULTS AND ANALYSIS
+*Note: Each experiment must follow the structure: **Why** it was conducted, the **Results** (Data), and the **Analysis** (Hardware/Cache explanation).*
+
+### 4.1 Experiment 1: Grid Coherent Samples (Linear Traversal)
+*   **Why:** To isolate and measure the absolute baseline administrative overhead of the data structures under perfect L1 cache hit conditions.
+*   **Results:** Dense and Two-Level perform nearly identically; NanoVDB is slower.
+*   **Analysis:** The GPU fetches contiguous memory blocks. Two-Level hides its single indirection step inside the cache fetch, whereas NanoVDB's multi-level lookup breaks optimal cache utilization.
+
+### 4.2 Experiment 2: Uniform Uncoherent Samples (Random Queries)
+*   **Why:** To stress-test the GPU memory architecture by intentionally causing maximum cache misses, simulating the worst-case scenario of chaotic secondary rays.
+*   **Results:** Two-Level is the fastest, beating the Dense grid.
+*   **Analysis:** Two-Level achieves "early exits" on the macro-grid, skipping expensive VRAM fetches for empty space. NanoVDB suffers from O(log n) tree traversal latency for every random un-cached point.
+
+### 4.3 Experiment 3: Ray Coherent Samples (Transmittance Baseline)
+*   **Why:** To establish a rendering baseline without space skipping, testing access patterns that are coherent along a 3D vector (a ray).
+*   **Results:** Dense > Two-Level > NanoVDB.
+*   **Analysis:** Demonstrates the cumulative cost of trilinear interpolation and address resolution when the ray steps blindly through empty space.
+
+### 4.4 Experiment 4: Ray Coherent with Space Skipping (DDA / HDDA)
+*   **Why:** The core problem focus. To evaluate how effectively the spatial partitioning of Sparse and Tree structures can be leveraged to accelerate rendering.
+*   **Results:** Two-Level DDA reduces render times massively (e.g., ~2.6ms), heavily outperforming NanoVDB HDDA (~9.7ms).
+*   **Analysis:** NanoVDB's hierarchical leaps do not pay off in moderately sized volumes. The flat, constant-time (O(1)) AABB slab-intersection of the Two-Level grid provides superior throughput compared to dynamic tree-level resolution.
+
+### 4.5 Memory Footprint Comparison
+*   **Why:** To contextualize the performance metrics against storage costs.
+*   **Results:** Two-Level (at optimal block sizes like bs=8) matches or slightly beats NanoVDB, both compressing the volume significantly compared to Dense.
+
+---
+
+## 5. DISCUSSION
+
+### 5.1 The Cache and Memory Access Trade-Off
+*   Synthesize the findings from 4.1 and 4.2: Data structures must align with GPU hardware execution (Warps) and caching mechanisms.
+
+### 5.2 Architectural Sweet Spots (O(1) vs. O(log n))
+*   Why NanoVDB did not "win": VDB is designed for Hollywood-scale volumes (10,000^3) with >99% sparsity, where HDDA can leap across massive voids.
+*   For moderate resolutions and standard cloud densities (~28% occupancy), the flat indirection of a Two-Level grid is the ultimate "sweet spot," trading theoretical infinite scalability for brutal, hardware-friendly raw speed.
+
+### 5.3 Limitations
+*   Lack of highly sparse, massive-resolution datasets (e.g., planetary scales) in the current pipeline where NanoVDB's hierarchy would theoretically surpass Two-Level grids.
+*   No analysis of scattering or delta-tracking (explicitly excluded from scope).
+
+---
+
+## 6. CONCLUSION
+*   Summary of the efficiency comparison.
+*   Final verdict: For GPU volume rendering at moderate resolutions, a Two-Level sparse grid paired with DDA empty-space skipping delivers the compression benefits of a tree while maintaining rendering speeds near that of a dense array, making it the superior choice over fully hierarchical structures.

@@ -1,0 +1,2 @@
+#undef FORWARD
+#undef BACKWARD
