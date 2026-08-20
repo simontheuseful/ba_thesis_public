@@ -62,6 +62,63 @@ float sample_density(pnanovdb_buf_t buf, pnanovdb_grid_type_t grid_type,
     return mix(y0, y1, alpha.z);
 }
 
+float transmittance_rm_nanovdb_dda(MAP_DECL,
+    pnanovdb_buf_t buf,
+    pnanovdb_grid_type_t grid_type,
+    inout pnanovdb_readaccessor_t acc,
+    vec3 x, vec3 w, float d, float step_size, float scale)
+{
+
+    vec3 grid_size = vec3(float(parameters.shape[2]), float(parameters.shape[1]), float(parameters.shape[0]));
+
+    vec3 idx_scale = (grid_size - vec3(float(parameters.align_corners))) * 0.5;
+    vec3 idx_offset = grid_size * 0.5 - vec3(0.5);
+    vec3 idx_origin = x * idx_scale + idx_offset;
+    vec3 idx_dir = w * idx_scale;
+
+    float tau = 0.0;
+    float t = step_size * random(); // random jittering to reduce banding artifacts
+
+    while (t < d) {
+        vec3 idx_pos = idx_origin + idx_dir * t;
+        ivec3 ijk = ivec3(floor(idx_pos));
+        int dim = int(pnanovdb_readaccessor_get_dim(grid_type, buf, acc, ijk));
+
+        if (dim > 1) {
+            ivec3 voxel_min = ijk & ivec3(~(dim - 1));
+            vec3 node_min = vec3(voxel_min);
+            vec3 node_max = node_min + vec3(float(dim));
+
+            // t_exit == the tMax this returns; we're already inside the node,
+            // so we don't need its tMin (entry) side
+            float node_tMin, t_exit;
+            ray_box_intersection(idx_origin, idx_dir, node_min, node_max, node_tMin, t_exit);
+
+            t = max(t_exit, t + 1.0e-4);
+            continue;
+        }
+
+        if (!bool(pnanovdb_readaccessor_is_active(grid_type, buf, acc, ijk))) {
+            vec3 node_min = vec3(ijk);
+            vec3 node_max = node_min + vec3(1.0);
+
+            float voxel_tMin, t_exit;
+            ray_box_intersection(idx_origin, idx_dir, node_min, node_max, voxel_tMin, t_exit);
+
+            t = max(t_exit, t + 1.0e-4);
+            continue;
+        }
+
+        float density = sample_density(buf, grid_type, acc, x + w * t, grid_size, parameters.align_corners);
+        tau += density * scale * step_size;
+
+        if (tau > 20.0) return 0.0;
+
+        t += step_size;
+    }
+    return exp(-tau);
+}
+
 FORWARD {
     vec3 x = vec3(_input[0], _input[1], _input[2]);
     vec3 w = vec3(_input[3], _input[4], _input[5]);
@@ -78,10 +135,12 @@ FORWARD {
         _output[0] = 1.0;
         return;
     }
-    tMin = max(0, tMin);
+
+    tMin = max(0.0, tMin);
     x += wo * tMin;
     float d = tMax - tMin;
 
+    // NanoVDB Setup
     pnanovdb_buf_t buf = pnanovdb_make_buf(load_tensor(parameters.nvdb_data));
     pnanovdb_grid_handle_t grid_handle = pnanovdb_grid_handle_t(pnanovdb_address_null());
     pnanovdb_grid_type_t grid_type = PNANOVDB_GRID_TYPE_FLOAT;
@@ -91,39 +150,12 @@ FORWARD {
     pnanovdb_readaccessor_t acc;
     pnanovdb_readaccessor_init(acc, root);
 
-    vec3 grid_size = vec3(float(parameters.shape[2]), float(parameters.shape[1]), float(parameters.shape[0]));
-
-    vec3 idx_scale = (grid_size - vec3(float(parameters.align_corners))) * 0.5;
-    vec3 idx_offset = grid_size * 0.5 - vec3(0.5);
-    vec3 idx_origin = x * idx_scale + idx_offset;
-    vec3 idx_dir = wo * idx_scale;
-
-    float tau = 0.0;
-    float t = parameters.step_size * random();
-    while (t < d) {
-        vec3 idx_pos = idx_origin + idx_dir * t;
-        ivec3 ijk = ivec3(floor(idx_pos));
-        int dim = int(pnanovdb_readaccessor_get_dim(grid_type, buf, acc, ijk));
-
-        if (dim > 1) {
-            // no leaf here: jump to where the ray exits this node's AABB
-            ivec3 voxel_min = ijk & ivec3(~(dim - 1));
-            vec3 node_min = vec3(voxel_min);
-            vec3 node_max = node_min + vec3(float(dim));
-            vec3 t0 = (node_min - idx_origin) / idx_dir;
-            vec3 t1 = (node_max - idx_origin) / idx_dir;
-            vec3 t_exit3 = max(t0, t1);
-            float t_exit = min(t_exit3.x, min(t_exit3.y, t_exit3.z));
-            t = max(t_exit, t + 1.0e-4);
-            continue;
-        }
-
-        float density = sample_density(buf, grid_type, acc, x + wo * t, grid_size, parameters.align_corners);
-        tau += density * parameters.extinction_scale * parameters.step_size;
-        if (tau > 20) { _output[0] = 0.0; return; }
-        t += parameters.step_size;
-    }
-    _output[0] = exp(-tau);
+    _output[0] = transmittance_rm_nanovdb_dda(_this,
+        buf, grid_type, acc,
+        x, wo, d,
+        parameters.step_size,
+        parameters.extinction_scale
+    );
 }
 
 BACKWARD {

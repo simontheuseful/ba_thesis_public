@@ -2,6 +2,7 @@ import os as _os
 import rdv
 import torch
 from utility import strip_nvdb_header
+import math
 
 _SHADERS_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "shaders")
 
@@ -62,17 +63,19 @@ class TwoLevelGrid3D(rdv.Map):
         parameters=dict(
             macro_grid=torch.Tensor,
             block_pool=torch.Tensor,
-            macro_shape=[3, int],  # KORREKTUR: Muss macro_shape heißen[cite: 1]
-            block_size=int,        # KORREKTUR: block_size für C++ registrieren[cite: 1]
+            shape=[3, int],
+            macro_shape=[3, int],
+            block_size=int,
             align_corners=int,
+            block_shift=int
         )
     )
 
     def __init__(self,
                  macro_grid: rdv.TensorLike,
                  block_pool: rdv.TensorLike,
-                 block_size: int = 8,              # Standardmäßig 8 ist für Micro-Blocks typisch
-                 align_corners: bool | int = True, # KORREKTUR: Parameter hinzugefügt
+                 block_size: int = 8,
+                 align_corners: bool | int = True,
                  input_dim=3, output_dim=None, input_requires_grad=False, bw_uses_output=False):
 
         assert block_size > 0 and (block_size & (block_size - 1)) == 0, \
@@ -90,10 +93,12 @@ class TwoLevelGrid3D(rdv.Map):
         self.macro_grid = macro_grid
         self.block_pool = block_pool
         self.block_size = int(block_size)
-        self.align_corners = int(align_corners)  # KORREKTUR: Variable binden
+        self.align_corners = int(align_corners)
+        self.block_shift =int(math.log2(block_size))
 
         for i in range(3):
             self.macro_shape[i] = macro_grid.shape[i]
+            self.shape[i] = macro_grid.shape[i] * block_size
 
     def clone(self, **kwargs) -> 'TwoLevelGrid3D':
         # KORREKTUR: align_corners beim Klonen mit übergeben
@@ -146,12 +151,14 @@ class RaymarchingTransmittanceTwoLevelDDA(rdv.Map):
         parameters=dict(
             macro_grid=torch.Tensor,
             block_pool=torch.Tensor,
+            shape=[3, int],
             macro_shape=[3, int],
             block_size=int,
             align_corners=int,
             step_size=float,
             transform=torch.Tensor,
             extinction_scale=float,
+            block_shift=int
         )
     )
 
@@ -188,8 +195,10 @@ class RaymarchingTransmittanceTwoLevelDDA(rdv.Map):
         self.step_size = step_size
         self.transform = transform
         self.extinction_scale = extinction_scale
+        self.block_shift =int(math.log2(block_size))
         for i in range(3):
             self.macro_shape[i] = macro_grid.shape[i]
+            self.shape[i] = macro_grid.shape[i] * block_size
 
     def clone(self, **kwargs) -> 'RaymarchingTransmittanceTwoLevelDDA':
         return RaymarchingTransmittanceTwoLevelDDA(
@@ -247,3 +256,50 @@ class RaymarchingTransmittanceNanoVDBDDA(rdv.Map):
         return RaymarchingTransmittanceNanoVDBDDA(
             self.nvdb_data, (self.shape[0], self.shape[1], self.shape[2]),
             self.step_size, self.transform, self.align_corners, self.extinction_scale, **kwargs)
+
+class TwoLevelGrid3DPadding(rdv.Map):
+    __extension_info__ = dict(
+        path=_os.path.join(_SHADERS_DIR, "two_level_grid3d_apron.h"),
+        parameters=dict(
+            macro_grid=torch.Tensor,
+            block_pool=torch.Tensor,
+            shape=[3, int],
+            macro_shape=[3, int],
+            block_size=int,
+            align_corners=int,
+            block_shift=int
+        )
+    )
+
+    def __init__(self,
+                 macro_grid: rdv.TensorLike,
+                 block_pool: rdv.TensorLike,
+                 block_size: int = 8,
+                 align_corners: bool | int = True,
+                 input_dim=3, output_dim=None, input_requires_grad=False, bw_uses_output=False):
+
+        assert block_size > 0 and (block_size & (block_size - 1)) == 0, \
+            f"block_size must be a power of 2, got {block_size}"
+
+        macro_grid = rdv.ensure_tensor(macro_grid, map_dim=3)
+        block_pool = rdv.ensure_tensor(block_pool, map_dim=5)
+
+        if output_dim is None:
+            output_dim = block_pool.shape[-1]
+
+        super().__init__(input_dim=input_dim, output_dim=output_dim,
+                         input_requires_grad=input_requires_grad, bw_uses_output=bw_uses_output)
+
+        self.macro_grid = macro_grid
+        self.block_pool = block_pool
+        self.block_size = int(block_size)
+        self.align_corners = int(align_corners)
+        self.block_shift =int(math.log2(block_size))
+
+        for i in range(3):
+            self.macro_shape[i] = macro_grid.shape[i]
+            self.shape[i] = macro_grid.shape[i] * block_size
+
+    def clone(self, **kwargs) -> 'TwoLevelGrid3DPadding':
+        # KORREKTUR: align_corners beim Klonen mit übergeben
+        return TwoLevelGrid3DPadding(self.macro_grid, self.block_pool, self.block_size, self.align_corners, **kwargs)
