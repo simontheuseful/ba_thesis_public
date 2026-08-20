@@ -9,6 +9,7 @@ FORWARD {
     ivec3 index0 = ivec3(floor(index_f));
     ivec3 index1 = index0 + ivec3(1);
 
+    // if ray is on (0,0) then alpha here is just 0
     vec3 alpha = index_f - vec3(index0);
 
     // if ray lands on the edge of the grid, index1 would be out of bounds so clamp it back to the grid
