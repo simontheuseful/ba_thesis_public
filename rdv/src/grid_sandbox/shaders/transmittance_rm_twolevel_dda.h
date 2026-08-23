@@ -96,16 +96,13 @@ float sample_density(MAP_DECL, vec3 x, vec3 grid_size, int align_corners) {
     return mix(y0, y1, alpha.z);
 }
 
-// same split as trait_transmittance_rm.h: FORWARD only sets up the ray in object
-// space, the trait function below owns the actual marching loop, so it can be
-// reasoned about (and reused) independently of the ray/transform boilerplate
+/*
 float transmittance_rm_twolevel_dda(MAP_DECL, vec3 x, vec3 w, float d, float step_size, float scale)
 {
     vec3 grid_size = vec3(float(parameters.shape[2]), float(parameters.shape[1]), float(parameters.shape[0]));
+    vec3 grid_scale = (grid_size - float(parameters.align_corners)) * 0.5;
 
     vec3 idx_origin = (x * (grid_size - float(parameters.align_corners)) + grid_size) * 0.5 - vec3(0.5);
-
-    vec3 grid_scale = (grid_size - float(parameters.align_corners)) * 0.5;
     vec3 idx_dir = w * grid_scale;
 
     int block_shift = parameters.block_shift;
@@ -140,6 +137,80 @@ float transmittance_rm_twolevel_dda(MAP_DECL, vec3 x, vec3 w, float d, float ste
 
         t += step_size;
     }
+    return exp(-tau * scale);
+}
+*/
+
+// this is 3dda from this github repository: https://github.com/DeadlockCode/voxel_ray_traversal
+// it is a implementation of Amanatides and Woo (1987) "A Fast Voxel Traversal Algorithm for Ray Tracing"
+float transmittance_rm_twolevel_dda(MAP_DECL, vec3 x, vec3 w, float d, float step_size, float scale)
+{
+    vec3 grid_size = vec3(float(parameters.shape[2]), float(parameters.shape[1]), float(parameters.shape[0]));
+    vec3 grid_scale = (grid_size - float(parameters.align_corners)) * 0.5;
+
+    ivec3 macro_dims = ivec3(parameters.macro_shape[2], parameters.macro_shape[1], parameters.macro_shape[0]);
+    float block_size_f = float(parameters.block_size);
+
+    // ray in voxel space
+    vec3 idx_origin = (x * (grid_size - float(parameters.align_corners)) + grid_size) * 0.5 - vec3(0.5);
+
+    // ray in macro block space
+    vec3 ray_org = idx_origin / block_size_f;
+    vec3 ray_dir = (w * grid_scale) / block_size_f;
+
+    vec3 ray_inv = vec3(1.0) / ray_dir; // optimization: precompute the inverse of the ray direction to avoid division in the loop
+    ivec3 coord = clamp(ivec3(floor(ray_org)), ivec3(0), macro_dims - ivec3(1)); // this is the macro block coordinate
+    ivec3 step = ivec3(sign(ray_inv)); // step direction for each axis
+    vec3 delta = abs(ray_inv); // distance to the next voxel boundary for each axis
+    vec3 select = vec3(0.5) + 0.5 * sign(ray_inv); // backwards is just the actual coordinate and forwards is +1
+    vec3 planes = vec3(coord) + select; // this is the next voxel boundary for each axis
+    vec3 t_next = (planes - ray_org) * ray_inv; // solves ray_org + t*ray_dir = plane for t
+
+    float tau = 0.0;
+    float current_t = step_size * random(); // jittering
+
+    while (current_t < d) {
+        if (coord.x < 0 || coord.x >= macro_dims.x ||
+            coord.y < 0 || coord.y >= macro_dims.y ||
+            coord.z < 0 || coord.z >= macro_dims.z) {
+            break;
+        }
+
+        float t_block_exit = min(t_next.x, min(t_next.y, t_next.z));
+
+        if (!block_is_empty(_this, coord)) {
+            float march_limit = min(d, t_block_exit);
+            while (current_t < march_limit) {
+                float density = sample_density(_this, x + w * current_t, grid_size, parameters.align_corners);
+                tau += density * step_size;
+
+                if (tau * scale > 20.0) return 0.0;
+
+                current_t += step_size;
+            }
+        } else {
+            current_t = max(t_block_exit, current_t);
+        }
+
+        if (t_next.x < t_next.y) {
+            if (t_next.x < t_next.z) {
+                coord.x += step.x;
+                t_next.x += delta.x;
+            } else {
+                coord.z += step.z;
+                t_next.z += delta.z;
+            }
+        } else {
+            if (t_next.y < t_next.z) {
+                coord.y += step.y;
+                t_next.y += delta.y;
+            } else {
+                coord.z += step.z;
+                t_next.z += delta.z;
+            }
+        }
+    }
+
     return exp(-tau * scale);
 }
 

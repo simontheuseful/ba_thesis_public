@@ -62,6 +62,7 @@ float sample_density(pnanovdb_buf_t buf, pnanovdb_grid_type_t grid_type,
     return mix(y0, y1, alpha.z);
 }
 
+/*
 float transmittance_rm_nanovdb_dda(MAP_DECL,
     pnanovdb_buf_t buf,
     pnanovdb_grid_type_t grid_type,
@@ -116,6 +117,58 @@ float transmittance_rm_nanovdb_dda(MAP_DECL,
 
         t += step_size;
     }
+    return exp(-tau);
+}
+*/
+
+float transmittance_rm_nanovdb_dda(MAP_DECL,
+    pnanovdb_buf_t buf,
+    pnanovdb_grid_type_t grid_type,
+    inout pnanovdb_readaccessor_t acc,
+    vec3 x, vec3 w, float d, float step_size, float scale)
+{
+    vec3 grid_size = vec3(float(parameters.shape[2]), float(parameters.shape[1]), float(parameters.shape[0]));
+
+    vec3 idx_scale = (grid_size - vec3(float(parameters.align_corners))) * 0.5;
+    vec3 idx_offset = grid_size * 0.5 - vec3(0.5);
+    vec3 idx_origin = x * idx_scale + idx_offset;
+    vec3 idx_dir = w * idx_scale;
+
+    float tau = 0.0;
+    float current_t = step_size * random(); // random jittering to reduce banding artifacts
+
+    ivec3 ijk = ivec3(floor(idx_origin + idx_dir * current_t));
+    int dim = int(pnanovdb_readaccessor_get_dim(grid_type, buf, acc, ijk));
+
+    pnanovdb_hdda_t hdda;
+    pnanovdb_hdda_init(hdda, idx_origin, current_t, idx_dir, d, dim);
+
+    while (true) {
+        float cell_exit = min(d, min(hdda.next.x, min(hdda.next.y, hdda.next.z)));
+
+        if (hdda.dim == 1 && bool(pnanovdb_readaccessor_is_active(grid_type, buf, acc, hdda.voxel))) {
+            while (current_t < cell_exit) {
+                float density = sample_density(buf, grid_type, acc, x + w * current_t, grid_size, parameters.align_corners);
+                tau += density * scale * step_size;
+
+                if (tau > 20.0) return 0.0;
+
+                current_t += step_size;
+            }
+        } else {
+            current_t = max(cell_exit, current_t);
+        }
+
+        if (current_t >= d || !bool(pnanovdb_hdda_step(hdda))) {
+            break;
+        }
+
+        vec3 pos = idx_origin + idx_dir * (hdda.tmin + 1.0e-4);
+        ijk = ivec3(floor(pos));
+        dim = int(pnanovdb_readaccessor_get_dim(grid_type, buf, acc, ijk));
+        pnanovdb_hdda_update(hdda, idx_origin, idx_dir, dim);
+    }
+
     return exp(-tau);
 }
 

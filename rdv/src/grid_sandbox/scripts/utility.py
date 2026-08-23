@@ -1,4 +1,3 @@
-import gc
 import time
 import numpy as np
 import torch
@@ -19,10 +18,8 @@ def strip_nvdb_header(nvdb_data: torch.Tensor) -> torch.Tensor:
         grid_data = torch.from_numpy(volume.array().numpy())
     return rdv.tensor_copy(grid_data.contiguous())
 
-
 def load_pt_volume(path: str, device="cuda") -> torch.Tensor:
     return torch.load(path, map_location=device, weights_only=True)
-
 
 def create_two_level_grid(cloud_tensor: torch.Tensor, block_size: int = 8, threshold: float = 1e-4):
     spatial_dims = cloud_tensor.shape[:3]
