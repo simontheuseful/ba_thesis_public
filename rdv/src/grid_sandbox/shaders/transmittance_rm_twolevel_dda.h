@@ -34,7 +34,7 @@ float sample_density(MAP_DECL, vec3 x, vec3 grid_size, int align_corners) {
     index0 = clamp(index0, ivec3(0), ivec3(grid_size) - ivec3(1));
     index1 = clamp(index1, ivec3(0), ivec3(grid_size) - ivec3(1));
 
-    int block_shift = findLSB(parameters.block_size);
+    int block_shift = parameters.block_shift;
     int block_mask = parameters.block_size - 1;
 
     ivec3 macro0 = index0 >> block_shift;
