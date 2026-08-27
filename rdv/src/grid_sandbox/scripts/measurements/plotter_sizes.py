@@ -11,7 +11,8 @@ import numpy as np
 PALETTE = ['#f8b333', '#f28800', '#e30713', '#e6007d', '#302782']
 
 
-def plot_sizes(labels, macro_mib, micro_mib, title, out_path, active_voxels_pct=None, threshold=None, shape=None):
+def plot_sizes(labels, macro_mib, micro_mib, title, out_path, active_voxels_pct=None, threshold=None, shape=None,
+               pdf=None):
     """
     macro_mib[i] / micro_mib[i]: stacked components for bar i. For bars with no
     macro/micro split (dense, .nvdb), pass macro_mib[i] = 0 -- the bar then
@@ -53,5 +54,7 @@ def plot_sizes(labels, macro_mib, micro_mib, title, out_path, active_voxels_pct=
     plt.tight_layout()
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     plt.savefig(out_path, format='pdf', bbox_inches='tight')
+    if pdf is not None:
+        pdf.savefig(fig, bbox_inches='tight')
     plt.close(fig)
     return out_path

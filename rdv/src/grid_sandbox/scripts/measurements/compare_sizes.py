@@ -92,6 +92,21 @@ def print_sizes(data):
               f"{mib(two_level_bytes):>12.2f}{data['pt_bytes'] / two_level_bytes:>9.2f}x")
 
 
+def plot_data(volume, data, pdf=None):
+    """Plots one compute_sizes(volume) result and saves to
+    diagrams/{volume}/{volume}_sizes.pdf. Returns the saved path. If pdf (a
+    matplotlib PdfPages) is given, the figure is also appended to it."""
+    labels = ["Dense"] + [f"2-L (bs={r['block_size']})" for r in data['two_level']] + ["NanoVDB"]
+    macro_mib = [0.0] + [mib(r['macro_bytes']) for r in data['two_level']] + [0.0]
+    micro_mib = [mib(data['pt_bytes'])] + [mib(r['micro_bytes']) for r in data['two_level']] + [mib(data['nvdb_bytes'])]
+    active_voxels_pct = data['active_voxels'] / data['total_voxels'] * 100
+    out_path = os.path.join(DIAGRAMS_DIR, volume, f"{volume}_sizes.pdf")
+    plot_sizes(labels, macro_mib, micro_mib, f"sizes -- volume: {volume}", out_path,
+               active_voxels_pct=active_voxels_pct, threshold=THRESHOLD, shape=data['shape'], pdf=pdf)
+    print(f"\nSaved {out_path}")
+    return out_path
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--volume", default="cloud_356")
@@ -102,14 +117,7 @@ def main():
     print_sizes(data)
 
     if args.plot:
-        labels = ["Dense"] + [f"2-L (bs={r['block_size']})" for r in data['two_level']] + ["NanoVDB"]
-        macro_mib = [0.0] + [mib(r['macro_bytes']) for r in data['two_level']] + [0.0]
-        micro_mib = [mib(data['pt_bytes'])] + [mib(r['micro_bytes']) for r in data['two_level']] + [mib(data['nvdb_bytes'])]
-        active_voxels_pct = data['active_voxels'] / data['total_voxels'] * 100
-        out_path = os.path.join(DIAGRAMS_DIR, args.volume, f"{args.volume}_sizes.pdf")
-        plot_sizes(labels, macro_mib, micro_mib, f"sizes -- volume: {args.volume}", out_path,
-                   active_voxels_pct=active_voxels_pct, threshold=THRESHOLD, shape=data['shape'])
-        print(f"\nSaved {out_path}")
+        plot_data(args.volume, data)
 
 
 if __name__ == "__main__":
