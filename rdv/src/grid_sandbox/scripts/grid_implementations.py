@@ -6,7 +6,6 @@ import math
 
 _SHADERS_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "shaders")
 
-
 class ExperimentalGrid3D(rdv.Map):
     """
     Maps 3D coordinates x,y,z in range [-1, 1] to a regular grid of values
@@ -104,7 +103,6 @@ class TwoLevelGrid3D(rdv.Map):
         # KORREKTUR: align_corners beim Klonen mit übergeben
         return TwoLevelGrid3D(self.macro_grid, self.block_pool, self.block_size, self.align_corners, **kwargs)
 
-
 class NanoVDBGrid3D(rdv.Map):
     __extension_info__ = dict(
         path=_os.path.join(_SHADERS_DIR, "nanovdb_grid3d.h"),
@@ -143,7 +141,6 @@ class NanoVDBGrid3D(rdv.Map):
 
     def clone(self, **kwargs) -> 'NanoVDBGrid3D':
         return NanoVDBGrid3D(self.nvdb_data, (self.shape[0], self.shape[1], self.shape[2]), self.align_corners, **kwargs)
-
 
 class RaymarchingTransmittanceTwoLevelDDA(rdv.Map):
     __extension_info__ = dict(
@@ -204,7 +201,6 @@ class RaymarchingTransmittanceTwoLevelDDA(rdv.Map):
         return RaymarchingTransmittanceTwoLevelDDA(
             self.macro_grid, self.block_pool, self.block_size,
             self.step_size, self.transform, self.align_corners, self.extinction_scale, **kwargs)
-
 
 class RaymarchingTransmittanceNanoVDBDDA(rdv.Map):
     __extension_info__ = dict(

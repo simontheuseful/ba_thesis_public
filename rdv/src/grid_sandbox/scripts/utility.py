@@ -1,5 +1,3 @@
-import time
-import numpy as np
 import torch
 import rdv
 import warp as wp
@@ -20,6 +18,10 @@ def strip_nvdb_header(nvdb_data: torch.Tensor) -> torch.Tensor:
 
 def load_pt_volume(path: str, device="cuda") -> torch.Tensor:
     return torch.load(path, map_location=device, weights_only=True)
+
+
+def tensor_bytes(t: torch.Tensor) -> int:
+    return t.numel() * t.element_size()
 
 def create_two_level_grid(cloud_tensor: torch.Tensor, block_size: int = 8, threshold: float = 1e-4):
     spatial_dims = cloud_tensor.shape[:3]
@@ -71,20 +73,3 @@ def generate_linear_points(shape, device="cuda") -> torch.Tensor:
     x = torch.linspace(-1, 1, W, device=device)
     zz, yy, xx = torch.meshgrid(z, y, x, indexing="ij")
     return torch.stack([xx, yy, zz], dim=-1).reshape(-1, 3).contiguous()
-
-
-def time_calls_ms(fn, warmup: int = 5, iterations: int = 10):
-    with torch.no_grad():
-        for _ in range(warmup):
-            fn()
-        torch.cuda.synchronize()
-
-        per_call_ms = np.empty(iterations)
-        for i in range(iterations):
-            torch.cuda.synchronize()
-            t0 = time.perf_counter()
-            fn()
-            torch.cuda.synchronize()
-            per_call_ms[i] = (time.perf_counter() - t0) * 1000.0
-
-    return float(per_call_ms.mean()), float(per_call_ms.std()), per_call_ms
