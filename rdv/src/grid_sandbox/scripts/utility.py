@@ -61,6 +61,67 @@ def create_two_level_grid(cloud_tensor: torch.Tensor, block_size: int = 8, thres
     return macro_grid_rdv, block_pool_rdv
 
 
+def create_two_level_grid_padded(cloud_tensor: torch.Tensor, block_size: int = 8, threshold: float = 1e-4):
+    """
+    Like create_two_level_grid, but every block stores (block_size+1)^3 voxels instead of
+    block_size^3: one extra layer copied in from the +x/+y/+z neighbouring voxels. This lets
+    the sampler resolve a whole trilinear cell from a single block/macro-grid lookup, since
+    the "upper" corner (index0+1) is guaranteed to still be inside the same block's own data
+    -- no separate lookup into a neighbouring block is ever needed.
+
+    Block activity (which blocks get a pool entry at all) is still decided from each block's
+    own block_size^3 region only, exactly as in create_two_level_grid -- the padding is purely
+    a sampling convenience and never affects which blocks are active.
+    """
+    spatial_dims = cloud_tensor.shape[:3]
+
+    for dim in spatial_dims:
+        if dim % block_size != 0:
+            raise ValueError(f"Grid dimensions must be divisible by block_size")
+
+    depth_count = spatial_dims[0] // block_size
+    height_count = spatial_dims[1] // block_size
+    width_count = spatial_dims[2] // block_size
+    c = cloud_tensor.shape[-1]
+
+    # same non-overlapping decomposition as create_two_level_grid, used only to pick active blocks
+    blocks = cloud_tensor.view(depth_count, block_size, height_count, block_size, width_count, block_size, c)
+    blocks = blocks.permute(0, 2, 4, 1, 3, 5, 6).contiguous()
+    flat_blocks = blocks.view(-1, block_size, block_size, block_size, c)
+    block_maxes = flat_blocks.abs().amax(dim=(1, 2, 3, 4))
+
+    non_empty_mask = block_maxes > threshold
+    active_blocks = non_empty_mask.sum().item()
+    valid_indices = non_empty_mask.nonzero().squeeze(-1)
+
+    # zero-pad by 1 voxel on the +D/+H/+W side, then carve overlapping (block_size+1)^3 windows
+    # via as_strided-backed unfold -- the padding is only ever read for a block's true last row,
+    # which the shader always clamps away, so its value never actually reaches a sample.
+    padded_vol = torch.nn.functional.pad(cloud_tensor.permute(3, 0, 1, 2), (0, 1, 0, 1, 0, 1))  # (c, D+1, H+1, W+1)
+    windows = padded_vol.unfold(1, block_size + 1, block_size) \
+                         .unfold(2, block_size + 1, block_size) \
+                         .unfold(3, block_size + 1, block_size)
+    # windows: (c, depth_count, height_count, width_count, block_size+1, block_size+1, block_size+1)
+    windows = windows.permute(1, 2, 3, 4, 5, 6, 0)  # -> (depth_count, height_count, width_count, B+1, B+1, B+1, c)
+
+    d_idx = valid_indices // (height_count * width_count)
+    rem = valid_indices % (height_count * width_count)
+    h_idx = rem // width_count
+    w_idx = rem % width_count
+    block_pool = windows[d_idx, h_idx, w_idx].contiguous()  # gathers only active blocks
+
+    macro_grid = torch.full((depth_count, height_count, width_count), -1, dtype=torch.int32, device=cloud_tensor.device)
+    macro_grid_flat = macro_grid.view(-1)
+
+    seq_indices = torch.arange(active_blocks, dtype=torch.int32, device=cloud_tensor.device)
+    macro_grid_flat[valid_indices] = seq_indices
+
+    macro_grid_rdv = rdv.tensor_copy(macro_grid)
+    block_pool_rdv = rdv.tensor_copy(block_pool)
+
+    return macro_grid_rdv, block_pool_rdv
+
+
 def generate_random_points(n: int, device="cuda", seed: int = 0) -> torch.Tensor:
     g = torch.Generator(device=device).manual_seed(seed)
     return torch.rand(n, 3, generator=g, device=device) * 2 - 1

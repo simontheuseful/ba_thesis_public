@@ -27,8 +27,10 @@ sys.path.insert(0, os.path.join(_HERE, ".."))  # grid_implementations.py / utili
 import numpy as np
 import torch
 import rdv
+import vulky as vk
 import grid_implementations as imp
-from utility import create_two_level_grid, load_pt_volume, generate_random_points, generate_linear_points
+from utility import (create_two_level_grid, create_two_level_grid_padded, load_pt_volume,
+                      generate_random_points, generate_linear_points)
 
 DATA_DIR = os.path.join(_HERE, "..", "..", "data")
 
@@ -36,10 +38,11 @@ THRESHOLD = 1e-4
 STEP_SIZE = 0.001
 IMAGE_SIZE = 512
 NUM_POINTS = 256 ** 3
+QUERY_BOX_SHAPE = (256, 256, 256)  # bounding box for random/linear point queries, independent of the volume's own shape
 MAX_BLOCK_SIZE = 32  # .nvdb files are cropped to a multiple of 32 (see nvdb_converter.py)
 
-VARIANTS = ["dense", "two_level", "nanovdb", "two_level_dda", "nanovdb_dda"]
-QUERY_VARIANTS = ["dense", "two_level", "nanovdb"]
+VARIANTS = ["dense", "two_level", "two_level_padded", "nanovdb", "two_level_dda", "two_level_dda_padded", "nanovdb_dda"]
+QUERY_VARIANTS = ["dense", "two_level", "two_level_padded", "nanovdb"]
 MODES = ["render", "random", "linear"]
 
 
@@ -79,6 +82,11 @@ def build_grid(variant, volume_name, block_size):
         macro_grid, block_pool = create_two_level_grid(rdv.tensor_copy(vol), block_size=block_size, threshold=THRESHOLD)
         grid = imp.TwoLevelGrid3D(macro_grid=macro_grid, block_pool=block_pool, block_size=block_size)
 
+    elif variant == "two_level_padded":
+        vol = load_trimmed_volume(volume_name, block_size=MAX_BLOCK_SIZE)
+        macro_grid, block_pool = create_two_level_grid_padded(rdv.tensor_copy(vol), block_size=block_size, threshold=THRESHOLD)
+        grid = imp.TwoLevelGrid3DPadded(macro_grid=macro_grid, block_pool=block_pool, block_size=block_size)
+
     elif variant == "nanovdb":
         vol = load_trimmed_volume(volume_name, block_size=MAX_BLOCK_SIZE)
         nvdb_path = os.path.join(DATA_DIR, f"{volume_name}.nvdb")
@@ -106,6 +114,15 @@ def build_view(variant, volume_name, block_size):
         transform = build_transform((D, H, W))
         macro_grid, block_pool = create_two_level_grid(rdv.tensor_copy(vol), block_size=block_size, threshold=THRESHOLD)
         map_ = imp.RaymarchingTransmittanceTwoLevelDDA(
+            macro_grid, block_pool, block_size, step_size=STEP_SIZE, transform=transform, extinction_scale=5.0
+        )
+
+    elif variant == "two_level_dda_padded":
+        vol = load_trimmed_volume(volume_name, block_size=MAX_BLOCK_SIZE)
+        D, H, W, C = vol.shape
+        transform = build_transform((D, H, W))
+        macro_grid, block_pool = create_two_level_grid_padded(rdv.tensor_copy(vol), block_size=block_size, threshold=THRESHOLD)
+        map_ = imp.RaymarchingTransmittanceTwoLevelDDAPadded(
             macro_grid, block_pool, block_size, step_size=STEP_SIZE, transform=transform, extinction_scale=5.0
         )
 
@@ -142,7 +159,13 @@ def measure(variant, volume, block_size, mode="render", warmup=3, iters=3):
             raise ValueError(f"mode {mode!r} only supports variant in {QUERY_VARIANTS}, got {variant!r}")
         grid, shape = build_grid(variant, volume, block_size)
         D, H, W, C = shape
-        points = generate_random_points(NUM_POINTS) if mode == "random" else generate_linear_points((D, H, W))
+        points = generate_random_points(NUM_POINTS) if mode == "random" else generate_linear_points(QUERY_BOX_SHAPE)
+        # Pre-wrap points once and hold the wrapper alive for the rest of this call: vulky's
+        # wrap_gpu() caches by points.data_ptr() in a weakref.WeakSet, but nothing else keeps
+        # the wrapper alive between grid(points) calls, so without this the cache misses every
+        # time and the full points tensor gets needlessly re-copied to GPU on every call --
+        # including every measured iteration, not just once during warmup.
+        points_wrapped = vk.wrap_gpu(points, 'in')
         call = lambda: grid(points)
         num_points = points.shape[0]
 
@@ -152,7 +175,9 @@ def measure(variant, volume, block_size, mode="render", warmup=3, iters=3):
     total_voxels = vol.numel()
 
     active_blocks = total_blocks = None
-    if variant in ("two_level", "two_level_dda"):
+    if variant in ("two_level", "two_level_dda", "two_level_padded", "two_level_dda_padded"):
+        # active_blocks/total_blocks only depend on which blocks are active, not on padding,
+        # so the plain (unpadded) grid builder is enough here even for two_level_padded.
         _, block_pool = create_two_level_grid(rdv.tensor_copy(vol), block_size=block_size, threshold=THRESHOLD)
         active_blocks = block_pool.shape[0]
         total_blocks = (D // block_size) * (H // block_size) * (W // block_size)

@@ -39,8 +39,8 @@ def main():
     with PdfPages(full_path) as pdf:
         for method in METHODS:
             print(f"\n{'=' * 80}\n{method}  --  volume={args.volume}\n{'=' * 80}")
-            rows = METHODS[method](args.volume)
-            plot_rows(method, args.volume, rows, pdf=pdf)
+            data = METHODS[method](args.volume)
+            plot_rows(method, args.volume, data, pdf=pdf)
 
         print(f"\n{'=' * 80}\nsizes  --  volume={args.volume}\n{'=' * 80}")
         data = compute_sizes(args.volume)

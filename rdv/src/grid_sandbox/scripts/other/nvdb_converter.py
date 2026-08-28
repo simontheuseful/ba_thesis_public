@@ -6,7 +6,7 @@ output folder.
 
 Usage:
     python nvdb_converter.py source output
-
+"""
 import argparse
 import os
 
@@ -56,4 +56,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-"""
