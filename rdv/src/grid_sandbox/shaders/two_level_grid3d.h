@@ -1,7 +1,9 @@
 /* Parameters
-macro_grid: tensor of shape (mD, mH, mW), int32. -1 means the block is empty (skipped), otherwise
-            it is the index of the block inside block_pool.
-block_pool: tensor of shape (K, block_size, block_size, block_size, OUTPUT_DIM), values of the active blocks.
+macro_grid: tensor of shape (mD, mH, mW), int32. 0 means the block is empty and points at the
+            reserved all-zero block at block_pool[0], otherwise it is the index of the block
+            inside block_pool.
+block_pool: tensor of shape (K, block_size, block_size, block_size, OUTPUT_DIM), values of the active
+            blocks; index 0 is a reserved all-zero block used by empty macro cells.
 macro_shape: int[3] with mD, mH, mW.
 block_size: side length (in voxels) of a block. Must be a power of 2.
 block_shift: log2(block_size)
@@ -15,16 +17,10 @@ GPUPtr resolve_corner(MAP_DECL, ivec3 macro_c, ivec3 local_c,
         + macro_c.x * macro_strides.x + macro_c.y * macro_strides.y + macro_c.z * macro_strides.z;
 
     int block_idx = int_ptr(macro_ptr).data[0];
-    if (block_idx < 0) return GPUPtr(0);
 
     return load_tensor(parameters.block_pool)
         + block_idx * bp_strides.w
         + local_c.x * bp_strides.x + local_c.y * bp_strides.y + local_c.z * bp_strides.z;
-}
-
-// Safely reads a channel value or returns 0.0 for empty blocks
-float read_val(GPUPtr ptr, int channel) {
-    return (ptr != GPUPtr(0)) ? float_ptr(ptr).data[channel] : 0.0;
 }
 
 FORWARD {
@@ -101,10 +97,10 @@ FORWARD {
     GPUPtr v111 = resolve_corner(_this, m111, l111, macro_strides, bp_strides);
 
     for (int i = 0; i < OUTPUT_DIM; i++) {
-        float x00 = mix(read_val(v000, i), read_val(v100, i), alpha.x);
-        float x10 = mix(read_val(v010, i), read_val(v110, i), alpha.x);
-        float x01 = mix(read_val(v001, i), read_val(v101, i), alpha.x);
-        float x11 = mix(read_val(v011, i), read_val(v111, i), alpha.x);
+        float x00 = mix(float_ptr(v000).data[i], float_ptr(v100).data[i], alpha.x);
+        float x10 = mix(float_ptr(v010).data[i], float_ptr(v110).data[i], alpha.x);
+        float x01 = mix(float_ptr(v001).data[i], float_ptr(v101).data[i], alpha.x);
+        float x11 = mix(float_ptr(v011).data[i], float_ptr(v111).data[i], alpha.x);
 
         float y0 = mix(x00, x10, alpha.y);
         float y1 = mix(x01, x11, alpha.y);

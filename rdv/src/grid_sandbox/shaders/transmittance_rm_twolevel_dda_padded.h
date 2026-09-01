@@ -3,13 +3,15 @@
 // block layout from two_level_grid3d_padded.h: one macro_grid/block_pool lookup per sample
 // instead of up to eight -- see create_two_level_grid_padded in utility.py.
 
+// block_pool[0] is the reserved all-zero block that empty macro cells point at (see
+// create_two_level_grid_padded in utility.py); used here to skip marching through empty macro blocks.
 bool block_is_empty(MAP_DECL, ivec3 macro_c) {
     int macro_stride_x = 4;
     int macro_stride_y = parameters.macro_shape[2] * macro_stride_x;
     int macro_stride_z = parameters.macro_shape[1] * macro_stride_y;
     GPUPtr macro_ptr = load_tensor(parameters.macro_grid)
         + macro_c.x * macro_stride_x + macro_c.y * macro_stride_y + macro_c.z * macro_stride_z;
-    return int_ptr(macro_ptr).data[0] < 0;
+    return int_ptr(macro_ptr).data[0] == 0;
 }
 
 float sample_density(MAP_DECL, vec3 x, vec3 grid_size, int align_corners) {
@@ -33,7 +35,6 @@ float sample_density(MAP_DECL, vec3 x, vec3 grid_size, int align_corners) {
     GPUPtr macro_ptr = load_tensor(parameters.macro_grid)
         + macro0.x * macro_stride_x + macro0.y * macro_stride_y + macro0.z * macro_stride_z;
     int block_idx = int_ptr(macro_ptr).data[0];
-    if (block_idx < 0) return 0.0;
 
     int bp_stride_x = 4; // OUTPUT_DIM == 1
     int bp_stride_y = padded_size * bp_stride_x;

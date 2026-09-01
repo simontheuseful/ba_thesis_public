@@ -47,12 +47,17 @@ def create_two_level_grid(cloud_tensor: torch.Tensor, block_size: int = 8, thres
     active_blocks = non_empty_mask.sum().item()
 
     valid_indices = non_empty_mask.nonzero().squeeze(-1)
-    block_pool = flat_blocks[valid_indices].contiguous()
+    active_pool = flat_blocks[valid_indices].contiguous()
 
-    macro_grid = torch.full((depth_count, height_count, width_count), -1, dtype=torch.int32, device=cloud_tensor.device)
+    # block_pool[0] is a reserved all-zero block. Empty macro cells point at it (index 0)
+    # instead of at -1, so the shader can always dereference block_idx without a branch.
+    empty_block = torch.zeros((1, block_size, block_size, block_size, c), dtype=cloud_tensor.dtype, device=cloud_tensor.device)
+    block_pool = torch.cat([empty_block, active_pool], dim=0)
+
+    macro_grid = torch.zeros((depth_count, height_count, width_count), dtype=torch.int32, device=cloud_tensor.device)
     macro_grid_flat = macro_grid.view(-1)
 
-    seq_indices = torch.arange(active_blocks, dtype=torch.int32, device=cloud_tensor.device)
+    seq_indices = torch.arange(1, active_blocks + 1, dtype=torch.int32, device=cloud_tensor.device)
     macro_grid_flat[valid_indices] = seq_indices
 
     macro_grid_rdv = rdv.tensor_copy(macro_grid)
@@ -108,12 +113,18 @@ def create_two_level_grid_padded(cloud_tensor: torch.Tensor, block_size: int = 8
     rem = valid_indices % (height_count * width_count)
     h_idx = rem // width_count
     w_idx = rem % width_count
-    block_pool = windows[d_idx, h_idx, w_idx].contiguous()  # gathers only active blocks
+    active_pool = windows[d_idx, h_idx, w_idx].contiguous()  # gathers only active blocks
 
-    macro_grid = torch.full((depth_count, height_count, width_count), -1, dtype=torch.int32, device=cloud_tensor.device)
+    # block_pool[0] is a reserved all-zero (block_size+1)^3 block. Empty macro cells point at
+    # it (index 0) instead of at -1, so the shader can always dereference block_idx without a branch.
+    padded_size = block_size + 1
+    empty_block = torch.zeros((1, padded_size, padded_size, padded_size, c), dtype=cloud_tensor.dtype, device=cloud_tensor.device)
+    block_pool = torch.cat([empty_block, active_pool], dim=0)
+
+    macro_grid = torch.zeros((depth_count, height_count, width_count), dtype=torch.int32, device=cloud_tensor.device)
     macro_grid_flat = macro_grid.view(-1)
 
-    seq_indices = torch.arange(active_blocks, dtype=torch.int32, device=cloud_tensor.device)
+    seq_indices = torch.arange(1, active_blocks + 1, dtype=torch.int32, device=cloud_tensor.device)
     macro_grid_flat[valid_indices] = seq_indices
 
     macro_grid_rdv = rdv.tensor_copy(macro_grid)

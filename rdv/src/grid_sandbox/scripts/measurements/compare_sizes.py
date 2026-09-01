@@ -65,7 +65,7 @@ def compute_sizes(volume):
         macro_grid, block_pool = create_two_level_grid(rdv.tensor_copy(vol), block_size=bs, threshold=THRESHOLD)
         macro_bytes = tensor_bytes(macro_grid)
         micro_bytes = tensor_bytes(block_pool)
-        active_blocks = block_pool.shape[0]
+        active_blocks = block_pool.shape[0] - 1  # block_pool[0] is the reserved empty block
         total_blocks = (D // bs) * (H // bs) * (W // bs)
         two_level.append(dict(
             block_size=bs, macro_bytes=macro_bytes, micro_bytes=micro_bytes,
@@ -75,7 +75,7 @@ def compute_sizes(volume):
         macro_grid_p, block_pool_p = create_two_level_grid_padded(rdv.tensor_copy(vol), block_size=bs, threshold=THRESHOLD)
         two_level_padded.append(dict(
             block_size=bs, macro_bytes=tensor_bytes(macro_grid_p), micro_bytes=tensor_bytes(block_pool_p),
-            active_blocks=block_pool_p.shape[0], total_blocks=total_blocks,
+            active_blocks=block_pool_p.shape[0] - 1, total_blocks=total_blocks,
         ))
 
     return dict(

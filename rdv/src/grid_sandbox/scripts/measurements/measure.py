@@ -179,7 +179,7 @@ def measure(variant, volume, block_size, mode="render", warmup=3, iters=3):
         # active_blocks/total_blocks only depend on which blocks are active, not on padding,
         # so the plain (unpadded) grid builder is enough here even for two_level_padded.
         _, block_pool = create_two_level_grid(rdv.tensor_copy(vol), block_size=block_size, threshold=THRESHOLD)
-        active_blocks = block_pool.shape[0]
+        active_blocks = block_pool.shape[0] - 1  # block_pool[0] is the reserved empty block
         total_blocks = (D // block_size) * (H // block_size) * (W // block_size)
 
     with torch.no_grad():

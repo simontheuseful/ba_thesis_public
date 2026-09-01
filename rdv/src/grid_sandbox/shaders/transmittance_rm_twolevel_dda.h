@@ -5,25 +5,21 @@ GPUPtr resolve_corner(MAP_DECL, ivec3 macro_c, ivec3 local_c,
         + macro_c.x * macro_strides.x + macro_c.y * macro_strides.y + macro_c.z * macro_strides.z;
 
     int block_idx = int_ptr(macro_ptr).data[0];
-    if (block_idx < 0) return GPUPtr(0);
 
     return load_tensor(parameters.block_pool)
         + block_idx * bp_strides.w
         + local_c.x * bp_strides.x + local_c.y * bp_strides.y + local_c.z * bp_strides.z;
 }
 
-// Safely reads a channel value or returns 0.0 for empty blocks
-float read_val(GPUPtr ptr, int channel) {
-    return (ptr != GPUPtr(0)) ? float_ptr(ptr).data[channel] : 0.0;
-}
-
+// block_pool[0] is the reserved all-zero block that empty macro cells point at (see
+// create_two_level_grid in utility.py); used here to skip marching through empty macro blocks.
 bool block_is_empty(MAP_DECL, ivec3 macro_c) {
     int macro_stride_x = 4;
     int macro_stride_y = parameters.macro_shape[2] * macro_stride_x;
     int macro_stride_z = parameters.macro_shape[1] * macro_stride_y;
     GPUPtr macro_ptr = load_tensor(parameters.macro_grid)
         + macro_c.x * macro_stride_x + macro_c.y * macro_stride_y + macro_c.z * macro_stride_z;
-    return int_ptr(macro_ptr).data[0] < 0;
+    return int_ptr(macro_ptr).data[0] == 0;
 }
 
 float sample_density(MAP_DECL, vec3 x, vec3 grid_size, int align_corners) {
@@ -85,10 +81,10 @@ float sample_density(MAP_DECL, vec3 x, vec3 grid_size, int align_corners) {
     GPUPtr v011 = resolve_corner(_this, m011, l011, macro_strides, bp_strides);
     GPUPtr v111 = resolve_corner(_this, m111, l111, macro_strides, bp_strides);
 
-    float x00 = mix(read_val(v000, 0), read_val(v100, 0), alpha.x);
-    float x10 = mix(read_val(v010, 0), read_val(v110, 0), alpha.x);
-    float x01 = mix(read_val(v001, 0), read_val(v101, 0), alpha.x);
-    float x11 = mix(read_val(v011, 0), read_val(v111, 0), alpha.x);
+    float x00 = mix(float_ptr(v000).data[0], float_ptr(v100).data[0], alpha.x);
+    float x10 = mix(float_ptr(v010).data[0], float_ptr(v110).data[0], alpha.x);
+    float x01 = mix(float_ptr(v001).data[0], float_ptr(v101).data[0], alpha.x);
+    float x11 = mix(float_ptr(v011).data[0], float_ptr(v111).data[0], alpha.x);
 
     float y0 = mix(x00, x10, alpha.y);
     float y1 = mix(x01, x11, alpha.y);
