@@ -9,11 +9,10 @@ The reference volume is always cropped to a multiple of 32 (matching the .nvdb
 files, see nvdb_converter.py) so dense/.nvdb/active-voxel numbers are fixed and
 only the two-level breakdown varies with block size.
 
---plot saves a bar chart to diagrams/{volume}/{volume}_size_compare.pdf.
+Console output only, no plotting.
 
 Usage:
     python compare_sizes.py --volume cloud_865
-    python compare_sizes.py --volume cloud_865 --plot
 """
 import argparse
 import os
@@ -24,12 +23,9 @@ sys.path.insert(0, os.path.join(_HERE, ".."))  # utility.py lives one level up
 
 import rdv
 from utility import load_pt_volume, create_two_level_grid, create_two_level_grid_padded, tensor_bytes
-from plotter_sizes import plot_sizes_compare
 
 DATA_DIR = os.path.join(_HERE, "..", "..", "data")
-DIAGRAMS_DIR = os.path.join(_HERE, "..", "..", "diagrams")
 
-THRESHOLD = 1e-4
 BLOCK_SIZE = 32  # .nvdb files are cropped to a multiple of 32 (see nvdb_converter.py)
 TWO_LEVEL_BLOCK_SIZES = [1, 2, 4, 8, 16, 32]
 
@@ -56,13 +52,13 @@ def compute_sizes(volume):
     pt_bytes = tensor_bytes(vol)
     nvdb_bytes = os.path.getsize(nvdb_path)
 
-    active_voxels = (vol.abs() > THRESHOLD).sum().item()
+    active_voxels = (vol.abs() > 0).sum().item()
     total_voxels = vol.numel()
 
     two_level = []
     two_level_padded = []
     for bs in TWO_LEVEL_BLOCK_SIZES:
-        macro_grid, block_pool = create_two_level_grid(rdv.tensor_copy(vol), block_size=bs, threshold=THRESHOLD)
+        macro_grid, block_pool = create_two_level_grid(rdv.tensor_copy(vol), block_size=bs)
         macro_bytes = tensor_bytes(macro_grid)
         micro_bytes = tensor_bytes(block_pool)
         active_blocks = block_pool.shape[0] - 1  # block_pool[0] is the reserved empty block
@@ -72,7 +68,7 @@ def compute_sizes(volume):
             active_blocks=active_blocks, total_blocks=total_blocks,
         ))
 
-        macro_grid_p, block_pool_p = create_two_level_grid_padded(rdv.tensor_copy(vol), block_size=bs, threshold=THRESHOLD)
+        macro_grid_p, block_pool_p = create_two_level_grid_padded(rdv.tensor_copy(vol), block_size=bs)
         two_level_padded.append(dict(
             block_size=bs, macro_bytes=tensor_bytes(macro_grid_p), micro_bytes=tensor_bytes(block_pool_p),
             active_blocks=block_pool_p.shape[0] - 1, total_blocks=total_blocks,
@@ -86,7 +82,7 @@ def compute_sizes(volume):
 
 
 def print_sizes(data):
-    print(f"volume={data['volume']} shape={data['shape']} threshold={THRESHOLD}")
+    print(f"volume={data['volume']} shape={data['shape']}")
     print(f"active_voxels={data['active_voxels']}/{data['total_voxels']} "
           f"({data['active_voxels'] / data['total_voxels'] * 100:.1f}%)")
     print(f"{'dense (.pt)':<20}{mib(data['pt_bytes']):>10.2f} MiB")
@@ -111,36 +107,13 @@ def print_sizes(data):
               f"{mib(padded_bytes):>12.2f}{data['pt_bytes'] / padded_bytes:>9.2f}x")
 
 
-def plot_data(volume, data, pdf=None):
-    """Plots two_level vs two_level_padded block_pool storage side by side across block
-    sizes, with dense/.nvdb as their own reference bars, and saves to
-    diagrams/{volume}/{volume}_size_compare.pdf."""
-    labels = [f"bs={r['block_size']}" for r in data['two_level']]
-    micro_a = [mib(r['micro_bytes']) for r in data['two_level']]
-    macro_a = [mib(r['macro_bytes']) for r in data['two_level']]
-    micro_b = [mib(r['micro_bytes']) for r in data['two_level_padded']]
-    macro_b = [mib(r['macro_bytes']) for r in data['two_level_padded']]
-    active_voxels_pct = data['active_voxels'] / data['total_voxels'] * 100
-    ref_bars = [("Dense (.pt)", mib(data['pt_bytes'])), ("NanoVDB (.nvdb)", mib(data['nvdb_bytes']))]
-    out_path = os.path.join(DIAGRAMS_DIR, volume, f"{volume}_size_compare.pdf")
-    plot_sizes_compare(labels, micro_a, macro_a, micro_b, macro_b, "2-Level", "2-Level-Padded",
-                        f"size -- volume: {volume}", out_path, ref_bars=ref_bars,
-                        active_voxels_pct=active_voxels_pct, threshold=THRESHOLD, shape=data['shape'], pdf=pdf)
-    print(f"\nSaved {out_path}")
-    return out_path
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--volume", default="cloud_356")
-    parser.add_argument("--plot", action="store_true", help="save a bar chart of the results as a pdf")
     args = parser.parse_args()
 
     data = compute_sizes(args.volume)
     print_sizes(data)
-
-    if args.plot:
-        plot_data(args.volume, data)
 
 
 if __name__ == "__main__":

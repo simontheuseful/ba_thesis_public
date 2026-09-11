@@ -5,3 +5,11 @@ __pycache__/
 .claude
 *.nvdb
 *.pt
+
+# measurement outputs, regenerated locally, not needed in the repo
+rdv/src/grid_sandbox/diagrams/
+rdv/src/grid_sandbox/data/
+
+# compiled shader artifacts, rebuilt on every run
+*.spv
+*.comp

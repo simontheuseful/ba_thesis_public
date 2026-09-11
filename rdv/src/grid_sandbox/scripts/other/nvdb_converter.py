@@ -14,7 +14,6 @@ import torch
 import fvdb
 
 BLOCK_SIZE = 32  # keep in sync with the max --block-size accepted by measure.py / compare_sizes.py
-THRESHOLD = 1e-4
 
 
 def convert(pt_path: str, nvdb_path: str):
@@ -25,7 +24,7 @@ def convert(pt_path: str, nvdb_path: str):
 
     vol_3d = vol.squeeze(-1)
     vol_3d = vol_3d.permute(2, 1, 0).contiguous()  # (D,H,W) -> (W,H,D), matches nanovdb_grid3d.h's ijk convention
-    mask = vol_3d > THRESHOLD
+    mask = vol_3d > 0
 
     grid = fvdb.Grid.from_dense(dense_dims=vol_3d.shape, mask=mask, device="cuda")
     ijk = grid.ijk

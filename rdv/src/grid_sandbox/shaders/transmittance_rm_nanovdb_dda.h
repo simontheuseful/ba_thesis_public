@@ -39,10 +39,12 @@ float sample_density(pnanovdb_buf_t buf, pnanovdb_grid_type_t grid_type,
 
     vec3 index_f = (x * (grid_size - align_corners) + grid_size) * 0.5 - vec3(0.5);
     ivec3 index0 = ivec3(floor(index_f));
-    ivec3 index1 = index0 + ivec3(1);
     vec3 alpha = index_f - vec3(index0);
+
+    // unlike the padded two-level block pool, the VDB accessor has no one-voxel halo, so the
+    // upper corner is a real second descent and both corners must be clamped to the grid
+    ivec3 index1 = clamp(index0 + ivec3(1), ivec3(0), ivec3(grid_size) - ivec3(1));
     index0 = clamp(index0, ivec3(0), ivec3(grid_size) - ivec3(1));
-    index1 = clamp(index1, ivec3(0), ivec3(grid_size) - ivec3(1));
 
     float v000 = nanovdb_read(buf, grid_type, acc, ivec3(index0.x, index0.y, index0.z));
     float v100 = nanovdb_read(buf, grid_type, acc, ivec3(index1.x, index0.y, index0.z));
@@ -62,65 +64,11 @@ float sample_density(pnanovdb_buf_t buf, pnanovdb_grid_type_t grid_type,
     return mix(y0, y1, alpha.z);
 }
 
-/*
-float transmittance_rm_nanovdb_dda(MAP_DECL,
-    pnanovdb_buf_t buf,
-    pnanovdb_grid_type_t grid_type,
-    inout pnanovdb_readaccessor_t acc,
-    vec3 x, vec3 w, float d, float step_size, float scale)
-{
-
-    vec3 grid_size = vec3(float(parameters.shape[2]), float(parameters.shape[1]), float(parameters.shape[0]));
-
-    vec3 idx_scale = (grid_size - vec3(float(parameters.align_corners))) * 0.5;
-    vec3 idx_offset = grid_size * 0.5 - vec3(0.5);
-    vec3 idx_origin = x * idx_scale + idx_offset;
-    vec3 idx_dir = w * idx_scale;
-
-    float tau = 0.0;
-    float t = step_size * random(); // random jittering to reduce banding artifacts
-
-    while (t < d) {
-        vec3 idx_pos = idx_origin + idx_dir * t;
-        ivec3 ijk = ivec3(floor(idx_pos));
-        int dim = int(pnanovdb_readaccessor_get_dim(grid_type, buf, acc, ijk));
-
-        if (dim > 1) {
-            ivec3 voxel_min = ijk & ivec3(~(dim - 1));
-            vec3 node_min = vec3(voxel_min);
-            vec3 node_max = node_min + vec3(float(dim));
-
-            // t_exit == the tMax this returns; we're already inside the node,
-            // so we don't need its tMin (entry) side
-            float node_tMin, t_exit;
-            ray_box_intersection(idx_origin, idx_dir, node_min, node_max, node_tMin, t_exit);
-
-            t = max(t_exit, t + 1.0e-4);
-            continue;
-        }
-
-        if (!bool(pnanovdb_readaccessor_is_active(grid_type, buf, acc, ijk))) {
-            vec3 node_min = vec3(ijk);
-            vec3 node_max = node_min + vec3(1.0);
-
-            float voxel_tMin, t_exit;
-            ray_box_intersection(idx_origin, idx_dir, node_min, node_max, voxel_tMin, t_exit);
-
-            t = max(t_exit, t + 1.0e-4);
-            continue;
-        }
-
-        float density = sample_density(buf, grid_type, acc, x + w * t, grid_size, parameters.align_corners);
-        tau += density * scale * step_size;
-
-        if (tau > 20.0) return 0.0;
-
-        t += step_size;
-    }
-    return exp(-tau);
-}
-*/
-
+// Same overall shape as transmittance_rm_two_level_dda(_padded).h: walk coarse cells, and inside
+// every non-empty cell run a fixed-step ray-march that accumulates optical depth. The only real
+// difference is the traversal engine -- NanoVDB's hierarchical DDA (cell size varies per node)
+// replaces the hand-rolled Amanatides & Woo stepper over a fixed macro grid, so the "advance one
+// cell" branch ladder lives inside pnanovdb_hdda_step() instead of being spelled out here.
 float transmittance_rm_nanovdb_dda(MAP_DECL,
     pnanovdb_buf_t buf,
     pnanovdb_grid_type_t grid_type,
@@ -128,70 +76,80 @@ float transmittance_rm_nanovdb_dda(MAP_DECL,
     vec3 x, vec3 w, float d, float step_size, float scale)
 {
     vec3 grid_size = vec3(float(parameters.shape[2]), float(parameters.shape[1]), float(parameters.shape[0]));
+    vec3 grid_scale = (grid_size - float(parameters.align_corners)) * 0.5;
 
-    vec3 idx_scale = (grid_size - vec3(float(parameters.align_corners))) * 0.5;
-    vec3 idx_offset = grid_size * 0.5 - vec3(0.5);
-    vec3 idx_origin = x * idx_scale + idx_offset;
-    vec3 idx_dir = w * idx_scale;
+    // ray in voxel (index) space -- the HDDA walks here, at voxel granularity
+    vec3 idx_origin = (x * (grid_size - float(parameters.align_corners)) + grid_size) * 0.5 - vec3(0.5);
+    vec3 idx_dir = w * grid_scale;
 
     float tau = 0.0;
-    float current_t = step_size * random(); // random jittering to reduce banding artifacts
+    float current_t = step_size * random(); // jittering
 
+    // seed the HDDA with the node size at the (jittered) entry point
     ivec3 ijk = ivec3(floor(idx_origin + idx_dir * current_t));
     int dim = int(pnanovdb_readaccessor_get_dim(grid_type, buf, acc, ijk));
 
     pnanovdb_hdda_t hdda;
     pnanovdb_hdda_init(hdda, idx_origin, current_t, idx_dir, d, dim);
 
-    while (true) {
-        float cell_exit = min(d, min(hdda.next.x, min(hdda.next.y, hdda.next.z)));
+    while (current_t < d) {
+        float cell_exit = min(hdda.next.x, min(hdda.next.y, hdda.next.z));
 
-        if (hdda.dim == 1 && bool(pnanovdb_readaccessor_is_active(grid_type, buf, acc, hdda.voxel))) {
-            while (current_t < cell_exit) {
+        if (hdda.dim == 1) { // dim == 1 -> inside an allocated leaf: march it
+            float march_limit = min(d, cell_exit);
+            while (current_t < march_limit) {
                 float density = sample_density(buf, grid_type, acc, x + w * current_t, grid_size, parameters.align_corners);
-                tau += density * scale * step_size;
+                tau += density * step_size;
 
-                if (tau > 20.0) return 0.0;
+                if (tau * scale > 20.0) return 0.0;
 
                 current_t += step_size;
             }
-        } else {
+        } else { // empty node (dim 8 / 128 / 4096): skip straight to its far side
             current_t = max(cell_exit, current_t);
         }
 
-        if (current_t >= d || !bool(pnanovdb_hdda_step(hdda))) {
+        // advance one HDDA node; unlike the fixed-grid DDA this step also reports "ray finished"
+        if (!bool(pnanovdb_hdda_step(hdda))) {
             break;
         }
 
+        // nudge past the node boundary before querying the level, otherwise floor()
+        // can round back into the voxel just exited and get_dim() reports the empty
+        // node we came from, which makes the HDDA skip the leaf we should march
         vec3 pos = idx_origin + idx_dir * (hdda.tmin + 1.0e-4);
         ijk = ivec3(floor(pos));
         dim = int(pnanovdb_readaccessor_get_dim(grid_type, buf, acc, ijk));
         pnanovdb_hdda_update(hdda, idx_origin, idx_dir, dim);
     }
 
-    return exp(-tau);
+    return exp(-tau * scale);
 }
 
 FORWARD {
-    vec3 x = vec3(_input[0], _input[1], _input[2]);
-    vec3 w = vec3(_input[3], _input[4], _input[5]);
+    // copy from transmittance_rm.h
+    vec3 x = vec3(_input[0], _input[1], _input[2]); // ray origin in world space (camera pos)
+    vec3 w = vec3(_input[3], _input[4], _input[5]); // ray direction in world space
 
-    mat4x3 M = mat4x3_ptr(load_tensor(parameters.transform)).data[0];
+    // Transform ray to local space
+    mat4x3 M = mat4x3_ptr(load_tensor(parameters.transform)).data[0]; // from object to world space
     mat3 L = inverse(mat3(M[0].xyz, M[1].xyz, M[2].xyz));
     vec3 O = M[3].xyz;
-    x = L * (x - O);
-    vec3 wo = L * w;
+    x = L * (x - O); // convert world position to object space position
+    vec3 wo = L * w; // convert world direction to object space direction (left unnormalized on purpose)
 
     float tMin, tMax;
     ray_box_intersection(x, wo, tMin, tMax);
-    if (tMax <= 0 || tMin > tMax) {
+    if (tMax <= 0 || tMin > tMax) // ray points away from the volume
+    {
         _output[0] = 1.0;
         return;
     }
 
-    tMin = max(0.0, tMin);
-    x += wo * tMin;
-    float d = tMax - tMin;
+    tMin = max(0.0, tMin); // clamp to 0 to avoid negative tMin
+
+    x += wo * tMin; // initial position in object space
+    float d = tMax - tMin; // max_t wrt wo
 
     // NanoVDB Setup
     pnanovdb_buf_t buf = pnanovdb_make_buf(load_tensor(parameters.nvdb_data));

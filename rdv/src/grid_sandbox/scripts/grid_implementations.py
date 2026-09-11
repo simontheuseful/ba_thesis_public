@@ -6,14 +6,14 @@ import math
 
 _SHADERS_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "shaders")
 
-class ExperimentalGrid3D(rdv.Map):
+class DenseGrid3D(rdv.Map):
     """
     Maps 3D coordinates x,y,z in range [-1, 1] to a regular grid of values
     at indices vz, vy, vx from a tenor (D, H, W, C).
     If align corner is true, the 0, 0, 0 is exactly the value 0,0,0 in the grid
     """
     __extension_info__ = dict(
-        path=_os.path.join(_SHADERS_DIR, "experimental_grid3d.h"), # The path to the file with the FORWARD and BACKWARD implementations
+        path=_os.path.join(_SHADERS_DIR, "dense_grid3d.h"), # The path to the file with the FORWARD and BACKWARD implementations
         parameters=dict(
             grid=torch.Tensor,  # inside code parameters.grid is a tensor
             shape=[3, int],  # inside code parameters.shape is a int[3]
@@ -54,7 +54,35 @@ class ExperimentalGrid3D(rdv.Map):
         It just recreates the map with the same bound parameters, changing potentially
         input_dim, output_dim in **kwargs, but that's automatic.
         """
-        return ExperimentalGrid3D(self.grid, self.align_corners, **kwargs)
+        return DenseGrid3D(self.grid, self.align_corners, **kwargs)
+
+
+class NullSampler3D(rdv.Map):
+    """Diagnostic sampler. Reads the three input coordinates, one multiply-add,
+    writes one density. No index math, no fetch. Times the floor set by
+    dispatching the threads and streaming the input and output tensors of a point
+    query. Same constructor as DenseGrid3D so build_grid can pass the volume
+    unchanged; the shader ignores it. See scripts/other/measure_io_floor.py."""
+    __extension_info__ = dict(
+        path=_os.path.join(_SHADERS_DIR, "null_sampler.h"),
+        parameters=dict(grid=torch.Tensor, shape=[3, int], align_corners=int),
+    )
+
+    def __init__(self, grid, align_corners=True,
+                 input_dim=3, output_dim=None, input_requires_grad=False, bw_uses_output=False):
+        grid = rdv.ensure_tensor(grid, map_dim=4)
+        if output_dim is None:
+            output_dim = grid.shape[-1]
+        super().__init__(input_dim=input_dim, output_dim=output_dim,
+                         input_requires_grad=input_requires_grad, bw_uses_output=bw_uses_output)
+        self.grid = grid
+        for i in range(3):
+            self.shape[i] = grid.shape[i]
+        self.align_corners = int(align_corners)
+
+    def clone(self, **kwargs) -> rdv.Map:
+        return NullSampler3D(self.grid, self.align_corners, **kwargs)
+
 
 class TwoLevelGrid3D(rdv.Map):
     __extension_info__ = dict(
@@ -194,9 +222,91 @@ class NanoVDBGrid3D(rdv.Map):
     def clone(self, **kwargs) -> 'NanoVDBGrid3D':
         return NanoVDBGrid3D(self.nvdb_data, (self.shape[0], self.shape[1], self.shape[2]), self.align_corners, **kwargs)
 
+class NanoVDBGrid3DOneFetchNoTrilinear(rdv.Map):
+    """Diagnostic sampler, same constructor and parameters as NanoVDBGrid3D but a single
+    nearest-neighbour NanoVDB lookup instead of the eight-corner trilinear gather. One full
+    accessor descent, one memory read, no interpolation at all. Isolates the descent cost
+    from the per-corner fetch cost, see nanovdb_grid3d_onefetch_notrilinear.h. Compare
+    against NanoVDBGrid3DOneFetch, which restores the trilinear arithmetic on top of the
+    same single fetch."""
+    __extension_info__ = dict(
+        path=_os.path.join(_SHADERS_DIR, "nanovdb_grid3d_onefetch_notrilinear.h"),
+        parameters=dict(
+            nvdb_data=torch.Tensor,
+            shape=[3, int],
+            align_corners=int,
+        )
+    )
+
+    def __init__(self,
+                 nvdb_data: rdv.TensorLike,
+                 shape,
+                 align_corners: bool | int = True,
+                 input_dim=3, output_dim=1, input_requires_grad=False, bw_uses_output=False):
+
+        nvdb_data = rdv.ensure_tensor(nvdb_data, map_dim=1)
+        assert nvdb_data.dtype == torch.uint8, "nvdb_data must be the raw bytes of a .nvdb file (torch.uint8)"
+        assert output_dim == 1, "NanoVDBGrid3DOneFetchNoTrilinear only supports single-channel (PNANOVDB_GRID_TYPE_FLOAT) grids"
+        assert len(shape) == 3, "shape must be (D, H, W)"
+
+        nvdb_data = strip_nvdb_header(nvdb_data)
+        assert input_dim == 3
+        super().__init__(input_dim=input_dim, output_dim=output_dim, input_requires_grad=input_requires_grad,
+                         bw_uses_output=bw_uses_output)
+        self.nvdb_data = nvdb_data
+        self.align_corners = int(align_corners)
+        for i in range(3):
+            self.shape[i] = int(shape[i])
+
+    def clone(self, **kwargs) -> 'NanoVDBGrid3DOneFetchNoTrilinear':
+        return NanoVDBGrid3DOneFetchNoTrilinear(
+            self.nvdb_data, (self.shape[0], self.shape[1], self.shape[2]), self.align_corners, **kwargs)
+
+class NanoVDBGrid3DOneFetch(rdv.Map):
+    """Diagnostic sampler, same constructor and parameters as NanoVDBGrid3D. Runs the same
+    trilinear blend (alpha computation, seven mix() calls) as NanoVDBGrid3D but from a
+    single accessor descent and a single memory read, the other seven "corners" are derived
+    from that one fetched value with ALU-only offsets, see nanovdb_grid3d_onefetch.h.
+    Compared against NanoVDBGrid3D (eight real fetches, identical arithmetic) this isolates
+    the cost of the seven extra fetches from the interpolation arithmetic. Compared against
+    NanoVDBGrid3DOneFetchNoTrilinear (one fetch, no arithmetic) it isolates the arithmetic
+    cost of the blend itself."""
+    __extension_info__ = dict(
+        path=_os.path.join(_SHADERS_DIR, "nanovdb_grid3d_onefetch.h"),
+        parameters=dict(
+            nvdb_data=torch.Tensor,
+            shape=[3, int],
+            align_corners=int,
+        )
+    )
+
+    def __init__(self,
+                 nvdb_data: rdv.TensorLike,
+                 shape,
+                 align_corners: bool | int = True,
+                 input_dim=3, output_dim=1, input_requires_grad=False, bw_uses_output=False):
+
+        nvdb_data = rdv.ensure_tensor(nvdb_data, map_dim=1)
+        assert nvdb_data.dtype == torch.uint8, "nvdb_data must be the raw bytes of a .nvdb file (torch.uint8)"
+        assert output_dim == 1, "NanoVDBGrid3DOneFetch only supports single-channel (PNANOVDB_GRID_TYPE_FLOAT) grids"
+        assert len(shape) == 3, "shape must be (D, H, W)"
+
+        nvdb_data = strip_nvdb_header(nvdb_data)
+        assert input_dim == 3
+        super().__init__(input_dim=input_dim, output_dim=output_dim, input_requires_grad=input_requires_grad,
+                         bw_uses_output=bw_uses_output)
+        self.nvdb_data = nvdb_data
+        self.align_corners = int(align_corners)
+        for i in range(3):
+            self.shape[i] = int(shape[i])
+
+    def clone(self, **kwargs) -> 'NanoVDBGrid3DOneFetch':
+        return NanoVDBGrid3DOneFetch(
+            self.nvdb_data, (self.shape[0], self.shape[1], self.shape[2]), self.align_corners, **kwargs)
+
 class RaymarchingTransmittanceTwoLevelDDA(rdv.Map):
     __extension_info__ = dict(
-        path=_os.path.join(_SHADERS_DIR, "transmittance_rm_twolevel_dda.h"),
+        path=_os.path.join(_SHADERS_DIR, "transmittance_rm_two_level_dda.h"),
         parameters=dict(
             macro_grid=torch.Tensor,
             block_pool=torch.Tensor,
@@ -262,7 +372,7 @@ class RaymarchingTransmittanceTwoLevelDDAPadded(rdv.Map):
     block_pool lookup instead of up to eight.
     """
     __extension_info__ = dict(
-        path=_os.path.join(_SHADERS_DIR, "transmittance_rm_twolevel_dda_padded.h"),
+        path=_os.path.join(_SHADERS_DIR, "transmittance_rm_two_level_dda_padded.h"),
         parameters=dict(
             macro_grid=torch.Tensor,
             block_pool=torch.Tensor,
@@ -370,3 +480,4 @@ class RaymarchingTransmittanceNanoVDBDDA(rdv.Map):
         return RaymarchingTransmittanceNanoVDBDDA(
             self.nvdb_data, (self.shape[0], self.shape[1], self.shape[2]),
             self.step_size, self.transform, self.align_corners, self.extinction_scale, **kwargs)
+

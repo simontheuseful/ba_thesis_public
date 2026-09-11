@@ -2,7 +2,7 @@
 nvdb_data: tensor holding the raw bytes of a single-grid .nvdb file, grid type PNANOVDB_GRID_TYPE_FLOAT
            (one float value per active voxel)
 shape: int[3] with the FULL logical (D, H, W) of the source volume the .nvdb was built from
-align_corners: int, same convention as experimental_grid3d.h/two_level_grid3d.h.
+align_corners: int, same convention as dense_grid3d.h/two_level_grid3d.h.
 */
 
 // DISCLAIMER: some parts here are AI generated as they were too specific with rdvs pointer missmatch problem

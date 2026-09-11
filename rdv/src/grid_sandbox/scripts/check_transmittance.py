@@ -48,12 +48,11 @@ def main():
             try:
                 while True:
                     _ = view.capture()
-                    time.sleep(0.005)
             except KeyboardInterrupt:
                 print("\nLoop stopped.")
         else:
             img = view.capture()
-            plt.imshow(img[0].cpu(), vmin=0.0, vmax=1.0, cmap='Blues_r')
+            plt.imshow(img[0].cpu(), vmin=0.0, vmax=1.0, cmap='gray_r')
             plt.gca().axis('off')
             plt.gca().invert_yaxis()
             plt.tight_layout(pad=0.0)

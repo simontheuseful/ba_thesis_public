@@ -34,15 +34,17 @@ from utility import (create_two_level_grid, create_two_level_grid_padded, load_p
 
 DATA_DIR = os.path.join(_HERE, "..", "..", "data")
 
-THRESHOLD = 1e-4
 STEP_SIZE = 0.001
 IMAGE_SIZE = 512
 NUM_POINTS = 256 ** 3
 QUERY_BOX_SHAPE = (256, 256, 256)  # bounding box for random/linear point queries, independent of the volume's own shape
 MAX_BLOCK_SIZE = 32  # .nvdb files are cropped to a multiple of 32 (see nvdb_converter.py)
 
-VARIANTS = ["dense", "two_level", "two_level_padded", "nanovdb", "two_level_dda", "two_level_dda_padded", "nanovdb_dda"]
-QUERY_VARIANTS = ["dense", "two_level", "two_level_padded", "nanovdb"]
+VARIANTS = ["dense", "two_level", "two_level_padded", "nanovdb", "nanovdb_onefetch", "nanovdb_onefetch_notrilinear",
+            "two_level_dda", "two_level_dda_padded", "nanovdb_dda",
+            "null"]  # null is a point-query diagnostic (the I/O floor), see build_grid
+QUERY_VARIANTS = ["dense", "two_level", "two_level_padded", "nanovdb", "nanovdb_onefetch",
+                  "nanovdb_onefetch_notrilinear", "null"]
 MODES = ["render", "random", "linear"]
 
 
@@ -75,16 +77,16 @@ def build_grid(variant, volume_name, block_size):
     """Builds just the grid map (no raymarching) for the point-query variants."""
     if variant == "dense":
         vol = load_trimmed_volume(volume_name, block_size=MAX_BLOCK_SIZE)
-        grid = imp.ExperimentalGrid3D(rdv.tensor_copy(vol))
+        grid = imp.DenseGrid3D(rdv.tensor_copy(vol))
 
     elif variant == "two_level":
         vol = load_trimmed_volume(volume_name, block_size=MAX_BLOCK_SIZE)
-        macro_grid, block_pool = create_two_level_grid(rdv.tensor_copy(vol), block_size=block_size, threshold=THRESHOLD)
+        macro_grid, block_pool = create_two_level_grid(rdv.tensor_copy(vol), block_size=block_size)
         grid = imp.TwoLevelGrid3D(macro_grid=macro_grid, block_pool=block_pool, block_size=block_size)
 
     elif variant == "two_level_padded":
         vol = load_trimmed_volume(volume_name, block_size=MAX_BLOCK_SIZE)
-        macro_grid, block_pool = create_two_level_grid_padded(rdv.tensor_copy(vol), block_size=block_size, threshold=THRESHOLD)
+        macro_grid, block_pool = create_two_level_grid_padded(rdv.tensor_copy(vol), block_size=block_size)
         grid = imp.TwoLevelGrid3DPadded(macro_grid=macro_grid, block_pool=block_pool, block_size=block_size)
 
     elif variant == "nanovdb":
@@ -95,6 +97,33 @@ def build_grid(variant, volume_name, block_size):
         D, H, W, C = vol.shape
         grid = imp.NanoVDBGrid3D(nvdb_tensor, shape=(D, H, W), align_corners=True)
 
+    elif variant == "nanovdb_onefetch":
+        # diagnostic: same trilinear blend arithmetic as nanovdb, but from a single accessor
+        # descent and a single memory read instead of eight, isolates the cost of the seven
+        # extra fetches from the interpolation arithmetic
+        vol = load_trimmed_volume(volume_name, block_size=MAX_BLOCK_SIZE)
+        nvdb_path = os.path.join(DATA_DIR, f"{volume_name}.nvdb")
+        nvdb_bytes = np.fromfile(nvdb_path, dtype=np.uint8)
+        nvdb_tensor = rdv.tensor_copy(torch.from_numpy(nvdb_bytes))
+        D, H, W, C = vol.shape
+        grid = imp.NanoVDBGrid3DOneFetch(nvdb_tensor, shape=(D, H, W), align_corners=True)
+
+    elif variant == "nanovdb_onefetch_notrilinear":
+        # diagnostic: single nearest-neighbour NanoVDB lookup, no interpolation at all,
+        # isolates the accessor descent cost from the per-corner fetch cost
+        vol = load_trimmed_volume(volume_name, block_size=MAX_BLOCK_SIZE)
+        nvdb_path = os.path.join(DATA_DIR, f"{volume_name}.nvdb")
+        nvdb_bytes = np.fromfile(nvdb_path, dtype=np.uint8)
+        nvdb_tensor = rdv.tensor_copy(torch.from_numpy(nvdb_bytes))
+        D, H, W, C = vol.shape
+        grid = imp.NanoVDBGrid3DOneFetchNoTrilinear(nvdb_tensor, shape=(D, H, W), align_corners=True)
+
+    elif variant == "null":
+        # diagnostic: reads and writes but does no sampling, the point-query I/O
+        # floor. block_size is ignored.
+        vol = load_trimmed_volume(volume_name, block_size=MAX_BLOCK_SIZE)
+        grid = imp.NullSampler3D(rdv.tensor_copy(vol))
+
     else:
         raise ValueError(f"--mode random/linear only supports --variant in {QUERY_VARIANTS}, got {variant!r}")
 
@@ -102,17 +131,22 @@ def build_grid(variant, volume_name, block_size):
 
 
 def build_view(variant, volume_name, block_size):
+    # Clean baseline: every non-DDA/HDDA variant (dense, two_level, two_level_padded, nanovdb)
+    # goes through the same generic rdv.RaymarchingTransmittance(extinction=grid, ...)
+    # composition, calling the representation's own point sampler fresh at every step. No
+    # representation gets a dedicated marcher or a precomputed voxel-space ray for this baseline
+    # -- that's deliberate, so every representation is compared on equal, unoptimized footing.
     if variant in QUERY_VARIANTS:
         grid, shape = build_grid(variant, volume_name, block_size)
         D, H, W, C = shape
         transform = build_transform((D, H, W))
-        map_ = rdv.RaymarchingTransmittance(extinction=grid * 5, step_size=STEP_SIZE, transform=transform)
+        map_ = rdv.RaymarchingTransmittance(extinction=grid * 5.0, step_size=STEP_SIZE, transform=transform)
 
     elif variant == "two_level_dda":
         vol = load_trimmed_volume(volume_name, block_size=MAX_BLOCK_SIZE)
         D, H, W, C = vol.shape
         transform = build_transform((D, H, W))
-        macro_grid, block_pool = create_two_level_grid(rdv.tensor_copy(vol), block_size=block_size, threshold=THRESHOLD)
+        macro_grid, block_pool = create_two_level_grid(rdv.tensor_copy(vol), block_size=block_size)
         map_ = imp.RaymarchingTransmittanceTwoLevelDDA(
             macro_grid, block_pool, block_size, step_size=STEP_SIZE, transform=transform, extinction_scale=5.0
         )
@@ -121,7 +155,7 @@ def build_view(variant, volume_name, block_size):
         vol = load_trimmed_volume(volume_name, block_size=MAX_BLOCK_SIZE)
         D, H, W, C = vol.shape
         transform = build_transform((D, H, W))
-        macro_grid, block_pool = create_two_level_grid_padded(rdv.tensor_copy(vol), block_size=block_size, threshold=THRESHOLD)
+        macro_grid, block_pool = create_two_level_grid_padded(rdv.tensor_copy(vol), block_size=block_size)
         map_ = imp.RaymarchingTransmittanceTwoLevelDDAPadded(
             macro_grid, block_pool, block_size, step_size=STEP_SIZE, transform=transform, extinction_scale=5.0
         )
@@ -144,7 +178,7 @@ def build_view(variant, volume_name, block_size):
     return build_sensor().view(map_), (D, H, W, C)
 
 
-def measure(variant, volume, block_size, mode="render", warmup=3, iters=3):
+def measure(variant, volume, block_size, mode="render", warmup=5, iters=25):
     """Builds the given configuration, times it, and returns a result dict. Raises
     ValueError for an invalid block_size/mode/variant combination."""
     if not (1 <= block_size <= MAX_BLOCK_SIZE):
@@ -171,14 +205,14 @@ def measure(variant, volume, block_size, mode="render", warmup=3, iters=3):
 
     D, H, W, C = shape
     vol = load_trimmed_volume(volume, MAX_BLOCK_SIZE)
-    active_voxels = (vol.abs() > THRESHOLD).sum().item()
+    active_voxels = (vol.abs() > 0).sum().item()
     total_voxels = vol.numel()
 
     active_blocks = total_blocks = None
     if variant in ("two_level", "two_level_dda", "two_level_padded", "two_level_dda_padded"):
         # active_blocks/total_blocks only depend on which blocks are active, not on padding,
         # so the plain (unpadded) grid builder is enough here even for two_level_padded.
-        _, block_pool = create_two_level_grid(rdv.tensor_copy(vol), block_size=block_size, threshold=THRESHOLD)
+        _, block_pool = create_two_level_grid(rdv.tensor_copy(vol), block_size=block_size)
         active_blocks = block_pool.shape[0] - 1  # block_pool[0] is the reserved empty block
         total_blocks = (D // block_size) * (H // block_size) * (W // block_size)
 

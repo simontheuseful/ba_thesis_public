@@ -20,7 +20,9 @@ GPUPtr resolve_corner(MAP_DECL, ivec3 macro_c, ivec3 local_c,
 
     return load_tensor(parameters.block_pool)
         + block_idx * bp_strides.w
-        + local_c.x * bp_strides.x + local_c.y * bp_strides.y + local_c.z * bp_strides.z;
+        + local_c.x * bp_strides.x
+        + local_c.y * bp_strides.y
+        + local_c.z * bp_strides.z;
 }
 
 FORWARD {

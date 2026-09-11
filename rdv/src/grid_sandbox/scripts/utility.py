@@ -19,11 +19,10 @@ def strip_nvdb_header(nvdb_data: torch.Tensor) -> torch.Tensor:
 def load_pt_volume(path: str, device="cuda") -> torch.Tensor:
     return torch.load(path, map_location=device, weights_only=True)
 
-
 def tensor_bytes(t: torch.Tensor) -> int:
     return t.numel() * t.element_size()
 
-def create_two_level_grid(cloud_tensor: torch.Tensor, block_size: int = 8, threshold: float = 1e-4):
+def create_two_level_grid(cloud_tensor: torch.Tensor, block_size: int = 8):
     spatial_dims = cloud_tensor.shape[:3]
 
     for dim in spatial_dims:
@@ -43,7 +42,7 @@ def create_two_level_grid(cloud_tensor: torch.Tensor, block_size: int = 8, thres
 
     block_maxes = flat_blocks.abs().amax(dim=(1, 2, 3, 4))
 
-    non_empty_mask = block_maxes > threshold
+    non_empty_mask = block_maxes > 0
     active_blocks = non_empty_mask.sum().item()
 
     valid_indices = non_empty_mask.nonzero().squeeze(-1)
@@ -66,7 +65,7 @@ def create_two_level_grid(cloud_tensor: torch.Tensor, block_size: int = 8, thres
     return macro_grid_rdv, block_pool_rdv
 
 
-def create_two_level_grid_padded(cloud_tensor: torch.Tensor, block_size: int = 8, threshold: float = 1e-4):
+def create_two_level_grid_padded(cloud_tensor: torch.Tensor, block_size: int = 8):
     """
     Like create_two_level_grid, but every block stores (block_size+1)^3 voxels instead of
     block_size^3: one extra layer copied in from the +x/+y/+z neighbouring voxels. This lets
@@ -95,7 +94,7 @@ def create_two_level_grid_padded(cloud_tensor: torch.Tensor, block_size: int = 8
     flat_blocks = blocks.view(-1, block_size, block_size, block_size, c)
     block_maxes = flat_blocks.abs().amax(dim=(1, 2, 3, 4))
 
-    non_empty_mask = block_maxes > threshold
+    non_empty_mask = block_maxes > 0
     active_blocks = non_empty_mask.sum().item()
     valid_indices = non_empty_mask.nonzero().squeeze(-1)
 
