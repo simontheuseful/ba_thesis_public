@@ -1,15 +1,3 @@
-/* Parameters
-macro_grid: tensor of shape (mD, mH, mW), int32. 0 means the block is empty and points at the
-            reserved all-zero block at block_pool[0], otherwise it is the index of the block
-            inside block_pool.
-block_pool: tensor of shape (K, block_size, block_size, block_size, OUTPUT_DIM), values of the active
-            blocks; index 0 is a reserved all-zero block used by empty macro cells.
-macro_shape: int[3] with mD, mH, mW.
-block_size: side length (in voxels) of a block. Must be a power of 2.
-block_shift: log2(block_size)
-align_corners: int, whether the tensor grid represents corner values or voxel values
-*/
-
 GPUPtr resolve_corner(MAP_DECL, ivec3 macro_c, ivec3 local_c,
     ivec3 macro_strides, ivec4 bp_strides) {
 

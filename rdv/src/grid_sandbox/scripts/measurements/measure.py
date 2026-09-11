@@ -1,15 +1,5 @@
 """
-Main measurement script: times one grid implementation, one configuration, console output only.
-
---mode render (default) times sensor.view(map).capture(), i.e. a full camera raymarch,
-for any of VARIANTS.
-
---mode random / linear time grid(points) directly -- a batch of point queries against
-the grid, no camera/raymarching involved -- for --variant in {dense, two_level, nanovdb}
-only (two_level_dda / nanovdb_dda take a 6D ray, not a 3D point, so they have no
-point-query form).
-
-Usage (from this directory, with rdv/src on PYTHONPATH):
+Usage:
     python measure.py --variant dense
     python measure.py --variant two_level --block-size 8
     python measure.py --variant nanovdb_dda --volume disney_cloud
@@ -74,7 +64,6 @@ def load_trimmed_volume(volume_name, block_size):
 
 
 def build_grid(variant, volume_name, block_size):
-    """Builds just the grid map (no raymarching) for the point-query variants."""
     if variant == "dense":
         vol = load_trimmed_volume(volume_name, block_size=MAX_BLOCK_SIZE)
         grid = imp.DenseGrid3D(rdv.tensor_copy(vol))
@@ -98,9 +87,6 @@ def build_grid(variant, volume_name, block_size):
         grid = imp.NanoVDBGrid3D(nvdb_tensor, shape=(D, H, W), align_corners=True)
 
     elif variant == "nanovdb_onefetch":
-        # diagnostic: same trilinear blend arithmetic as nanovdb, but from a single accessor
-        # descent and a single memory read instead of eight, isolates the cost of the seven
-        # extra fetches from the interpolation arithmetic
         vol = load_trimmed_volume(volume_name, block_size=MAX_BLOCK_SIZE)
         nvdb_path = os.path.join(DATA_DIR, f"{volume_name}.nvdb")
         nvdb_bytes = np.fromfile(nvdb_path, dtype=np.uint8)
@@ -109,8 +95,6 @@ def build_grid(variant, volume_name, block_size):
         grid = imp.NanoVDBGrid3DOneFetch(nvdb_tensor, shape=(D, H, W), align_corners=True)
 
     elif variant == "nanovdb_onefetch_notrilinear":
-        # diagnostic: single nearest-neighbour NanoVDB lookup, no interpolation at all,
-        # isolates the accessor descent cost from the per-corner fetch cost
         vol = load_trimmed_volume(volume_name, block_size=MAX_BLOCK_SIZE)
         nvdb_path = os.path.join(DATA_DIR, f"{volume_name}.nvdb")
         nvdb_bytes = np.fromfile(nvdb_path, dtype=np.uint8)
@@ -119,8 +103,6 @@ def build_grid(variant, volume_name, block_size):
         grid = imp.NanoVDBGrid3DOneFetchNoTrilinear(nvdb_tensor, shape=(D, H, W), align_corners=True)
 
     elif variant == "null":
-        # diagnostic: reads and writes but does no sampling, the point-query I/O
-        # floor. block_size is ignored.
         vol = load_trimmed_volume(volume_name, block_size=MAX_BLOCK_SIZE)
         grid = imp.NullSampler3D(rdv.tensor_copy(vol))
 
@@ -131,11 +113,6 @@ def build_grid(variant, volume_name, block_size):
 
 
 def build_view(variant, volume_name, block_size):
-    # Clean baseline: every non-DDA/HDDA variant (dense, two_level, two_level_padded, nanovdb)
-    # goes through the same generic rdv.RaymarchingTransmittance(extinction=grid, ...)
-    # composition, calling the representation's own point sampler fresh at every step. No
-    # representation gets a dedicated marcher or a precomputed voxel-space ray for this baseline
-    # -- that's deliberate, so every representation is compared on equal, unoptimized footing.
     if variant in QUERY_VARIANTS:
         grid, shape = build_grid(variant, volume_name, block_size)
         D, H, W, C = shape
@@ -194,12 +171,10 @@ def measure(variant, volume, block_size, mode="render", warmup=5, iters=25):
         grid, shape = build_grid(variant, volume, block_size)
         D, H, W, C = shape
         points = generate_random_points(NUM_POINTS) if mode == "random" else generate_linear_points(QUERY_BOX_SHAPE)
-        # Pre-wrap points once and hold the wrapper alive for the rest of this call: vulky's
-        # wrap_gpu() caches by points.data_ptr() in a weakref.WeakSet, but nothing else keeps
-        # the wrapper alive between grid(points) calls, so without this the cache misses every
-        # time and the full points tensor gets needlessly re-copied to GPU on every call --
-        # including every measured iteration, not just once during warmup.
+
+        # overhead fix ?
         points_wrapped = vk.wrap_gpu(points, 'in')
+
         call = lambda: grid(points)
         num_points = points.shape[0]
 
@@ -210,8 +185,6 @@ def measure(variant, volume, block_size, mode="render", warmup=5, iters=25):
 
     active_blocks = total_blocks = None
     if variant in ("two_level", "two_level_dda", "two_level_padded", "two_level_dda_padded"):
-        # active_blocks/total_blocks only depend on which blocks are active, not on padding,
-        # so the plain (unpadded) grid builder is enough here even for two_level_padded.
         _, block_pool = create_two_level_grid(rdv.tensor_copy(vol), block_size=block_size)
         active_blocks = block_pool.shape[0] - 1  # block_pool[0] is the reserved empty block
         total_blocks = (D // block_size) * (H // block_size) * (W // block_size)

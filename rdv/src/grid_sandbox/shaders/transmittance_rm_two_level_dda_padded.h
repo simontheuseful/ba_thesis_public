@@ -1,10 +1,3 @@
-// Same macro-level 3D-DDA traversal as transmittance_rm_two_level_dda.h (Amanatides & Woo 1987,
-// https://github.com/DeadlockCode/voxel_ray_traversal), but sample_density() uses the padded
-// block layout from two_level_grid3d_padded.h: one macro_grid/block_pool lookup per sample
-// instead of up to eight -- see create_two_level_grid_padded in utility.py.
-
-// block_pool[0] is the reserved all-zero block that empty macro cells point at (see
-// create_two_level_grid_padded in utility.py); used here to skip marching through empty macro blocks.
 bool block_is_empty(MAP_DECL, ivec3 macro_c) {
     int macro_stride_x = 4;
     int macro_stride_y = parameters.macro_shape[2] * macro_stride_x;

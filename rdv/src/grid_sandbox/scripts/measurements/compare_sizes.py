@@ -1,16 +1,4 @@
 """
-Compares on-disk/on-GPU footprint of the same volume across representations: dense .pt
-tensor, two-level sparse grid (macro grid + block pool, both unpadded and padded with
-(block_size+1)^3 blocks -- see create_two_level_grid_padded) swept across block sizes, and
-.nvdb. The DDA variants (two_level_dda, two_level_dda_padded, nanovdb_dda) reuse the exact
-same underlying data as their non-DDA counterparts, so they have no separate size entry here.
-
-The reference volume is always cropped to a multiple of 32 (matching the .nvdb
-files, see nvdb_converter.py) so dense/.nvdb/active-voxel numbers are fixed and
-only the two-level breakdown varies with block size.
-
-Console output only, no plotting.
-
 Usage:
     python compare_sizes.py --volume cloud_865
 """

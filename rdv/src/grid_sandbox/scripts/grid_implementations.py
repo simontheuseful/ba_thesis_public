@@ -58,11 +58,6 @@ class DenseGrid3D(rdv.Map):
 
 
 class NullSampler3D(rdv.Map):
-    """Diagnostic sampler. Reads the three input coordinates, one multiply-add,
-    writes one density. No index math, no fetch. Times the floor set by
-    dispatching the threads and streaming the input and output tensors of a point
-    query. Same constructor as DenseGrid3D so build_grid can pass the volume
-    unchanged; the shader ignores it. See scripts/other/measure_io_floor.py."""
     __extension_info__ = dict(
         path=_os.path.join(_SHADERS_DIR, "null_sampler.h"),
         parameters=dict(grid=torch.Tensor, shape=[3, int], align_corners=int),
@@ -132,12 +127,6 @@ class TwoLevelGrid3D(rdv.Map):
         return TwoLevelGrid3D(self.macro_grid, self.block_pool, self.block_size, self.align_corners, **kwargs)
 
 class TwoLevelGrid3DPadded(rdv.Map):
-    """
-    Same two-level structure as TwoLevelGrid3D, but block_pool blocks are (block_size+1)^3:
-    each block carries one extra layer of its +x/+y/+z neighbours' voxels, so every trilinear
-    sample resolves from a single macro_grid/block_pool lookup instead of up to eight -- see
-    create_two_level_grid_padded in utility.py and shaders/two_level_grid3d_padded.h.
-    """
     __extension_info__ = dict(
         path=_os.path.join(_SHADERS_DIR, "two_level_grid3d_padded.h"),
         parameters=dict(
@@ -223,12 +212,6 @@ class NanoVDBGrid3D(rdv.Map):
         return NanoVDBGrid3D(self.nvdb_data, (self.shape[0], self.shape[1], self.shape[2]), self.align_corners, **kwargs)
 
 class NanoVDBGrid3DOneFetchNoTrilinear(rdv.Map):
-    """Diagnostic sampler, same constructor and parameters as NanoVDBGrid3D but a single
-    nearest-neighbour NanoVDB lookup instead of the eight-corner trilinear gather. One full
-    accessor descent, one memory read, no interpolation at all. Isolates the descent cost
-    from the per-corner fetch cost, see nanovdb_grid3d_onefetch_notrilinear.h. Compare
-    against NanoVDBGrid3DOneFetch, which restores the trilinear arithmetic on top of the
-    same single fetch."""
     __extension_info__ = dict(
         path=_os.path.join(_SHADERS_DIR, "nanovdb_grid3d_onefetch_notrilinear.h"),
         parameters=dict(
@@ -263,14 +246,6 @@ class NanoVDBGrid3DOneFetchNoTrilinear(rdv.Map):
             self.nvdb_data, (self.shape[0], self.shape[1], self.shape[2]), self.align_corners, **kwargs)
 
 class NanoVDBGrid3DOneFetch(rdv.Map):
-    """Diagnostic sampler, same constructor and parameters as NanoVDBGrid3D. Runs the same
-    trilinear blend (alpha computation, seven mix() calls) as NanoVDBGrid3D but from a
-    single accessor descent and a single memory read, the other seven "corners" are derived
-    from that one fetched value with ALU-only offsets, see nanovdb_grid3d_onefetch.h.
-    Compared against NanoVDBGrid3D (eight real fetches, identical arithmetic) this isolates
-    the cost of the seven extra fetches from the interpolation arithmetic. Compared against
-    NanoVDBGrid3DOneFetchNoTrilinear (one fetch, no arithmetic) it isolates the arithmetic
-    cost of the blend itself."""
     __extension_info__ = dict(
         path=_os.path.join(_SHADERS_DIR, "nanovdb_grid3d_onefetch.h"),
         parameters=dict(
@@ -365,12 +340,6 @@ class RaymarchingTransmittanceTwoLevelDDA(rdv.Map):
             self.step_size, self.transform, self.align_corners, self.extinction_scale, **kwargs)
 
 class RaymarchingTransmittanceTwoLevelDDAPadded(rdv.Map):
-    """
-    Same macro-level 3D-DDA traversal as RaymarchingTransmittanceTwoLevelDDA, but samples
-    density from a padded block_pool (block_size+1 per axis, see TwoLevelGrid3DPadded /
-    create_two_level_grid_padded) so each density sample resolves from a single macro_grid/
-    block_pool lookup instead of up to eight.
-    """
     __extension_info__ = dict(
         path=_os.path.join(_SHADERS_DIR, "transmittance_rm_two_level_dda_padded.h"),
         parameters=dict(

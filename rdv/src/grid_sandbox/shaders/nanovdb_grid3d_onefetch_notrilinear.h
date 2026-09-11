@@ -1,10 +1,3 @@
-/* Diagnostic: nearest-neighbour NanoVDB sampler, one accessor descent and one
-   memory read per sample, no trilinear interpolation at all (no alpha, no
-   mix()). Compared against nanovdb_grid3d.h (one descent, eight reads, full
-   trilinear blend) this isolates the descent cost from the per-corner fetch
-   cost. See also nanovdb_grid3d_onefetch.h, which restores the full
-   interpolation arithmetic on top of a single fetch, to further separate the
-   arithmetic cost of the blend from the memory cost of the extra fetches. */
 #define PNANOVDB_GLSL
 #define PNANOVDB_BUF_CUSTOM
 

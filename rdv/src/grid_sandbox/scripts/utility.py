@@ -4,7 +4,6 @@ import warp as wp
 
 GRID_MAGIC = (0x304244566f6e614e, 0x314244566f6e614e)  # "NanoVDB0" / "NanoVDB1" -- bare GridData
 
-
 def strip_nvdb_header(nvdb_data: torch.Tensor) -> torch.Tensor:
     cpu_bytes = nvdb_data.cpu()
     magic = int.from_bytes(bytes(cpu_bytes[:8].numpy()), "little")
@@ -66,17 +65,6 @@ def create_two_level_grid(cloud_tensor: torch.Tensor, block_size: int = 8):
 
 
 def create_two_level_grid_padded(cloud_tensor: torch.Tensor, block_size: int = 8):
-    """
-    Like create_two_level_grid, but every block stores (block_size+1)^3 voxels instead of
-    block_size^3: one extra layer copied in from the +x/+y/+z neighbouring voxels. This lets
-    the sampler resolve a whole trilinear cell from a single block/macro-grid lookup, since
-    the "upper" corner (index0+1) is guaranteed to still be inside the same block's own data
-    -- no separate lookup into a neighbouring block is ever needed.
-
-    Block activity (which blocks get a pool entry at all) is still decided from each block's
-    own block_size^3 region only, exactly as in create_two_level_grid -- the padding is purely
-    a sampling convenience and never affects which blocks are active.
-    """
     spatial_dims = cloud_tensor.shape[:3]
 
     for dim in spatial_dims:

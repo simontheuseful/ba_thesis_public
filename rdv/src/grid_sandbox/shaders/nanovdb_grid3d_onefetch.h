@@ -1,16 +1,3 @@
-/* Diagnostic: NanoVDB sampler with the full trilinear blend of nanovdb_grid3d.h
-   (same alpha computation, same seven mix() calls) but only ONE accessor descent
-   and ONE memory read per sample. The eight "corners" fed into the blend are
-   derived from that single fetched value with small ALU-only offsets built from
-   alpha, so the compiler cannot fold mix(v, v, a) down to a bare copy, while no
-   second, third, ... memory access ever happens.
-
-   Compared against nanovdb_grid3d_onefetch_notrilinear.h (one fetch, no blend
-   arithmetic at all) this isolates the arithmetic cost of the trilinear blend
-   from the cost of doing only one fetch instead of eight. Compared against
-   nanovdb_grid3d.h (eight real fetches, same arithmetic) it isolates the cost
-   of the seven extra fetches from the arithmetic, since both run the identical
-   blend. */
 #define PNANOVDB_GLSL
 #define PNANOVDB_BUF_CUSTOM
 
@@ -67,7 +54,7 @@ FORWARD {
     pnanovdb_readaccessor_t acc;
     pnanovdb_readaccessor_init(acc, root);
 
-    // ONE descent, ONE read -- everything below is pure ALU, no second fetch
+    // ONE descent, ONE read everything below is pure ALU, no second fetch
     float base = nanovdb_sample(buf, grid_type, acc, ivec3(c0.x, c0.y, c0.z));
     float v000 = base;
     float v100 = base + alpha.x * 1.0e-4;

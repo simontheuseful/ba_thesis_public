@@ -1,19 +1,3 @@
-/* Parameters
-macro_grid: tensor of shape (mD, mH, mW), int32. 0 means the block is empty and points at the
-            reserved all-zero block at block_pool[0], otherwise it is the index of the block
-            inside block_pool.
-block_pool: tensor of shape (K, block_size+1, block_size+1, block_size+1, OUTPUT_DIM). Each block
-            stores its own block_size^3 voxels PLUS one extra layer copied in from its +x/+y/+z
-            neighbours, so every trilinear cell inside a block's own region is fully resolvable
-            from this one block -- see create_two_level_grid_padded in utility.py. Index 0 is a
-            reserved all-zero block used by empty macro cells.
-macro_shape: int[3] with mD, mH, mW.
-block_size: side length (in voxels) of a block's own region. Must be a power of 2. (block_pool
-            blocks are block_size+1 wide per axis, to hold the padding.)
-block_shift: log2(block_size)
-align_corners: int, whether the tensor grid represents corner values or voxel values
-*/
-
 FORWARD {
     vec3 grid_size = vec3(float(parameters.shape[2]), float(parameters.shape[1]), float(parameters.shape[0]));
 

@@ -64,11 +64,6 @@ float sample_density(pnanovdb_buf_t buf, pnanovdb_grid_type_t grid_type,
     return mix(y0, y1, alpha.z);
 }
 
-// Same overall shape as transmittance_rm_two_level_dda(_padded).h: walk coarse cells, and inside
-// every non-empty cell run a fixed-step ray-march that accumulates optical depth. The only real
-// difference is the traversal engine -- NanoVDB's hierarchical DDA (cell size varies per node)
-// replaces the hand-rolled Amanatides & Woo stepper over a fixed macro grid, so the "advance one
-// cell" branch ladder lives inside pnanovdb_hdda_step() instead of being spelled out here.
 float transmittance_rm_nanovdb_dda(MAP_DECL,
     pnanovdb_buf_t buf,
     pnanovdb_grid_type_t grid_type,
@@ -85,7 +80,6 @@ float transmittance_rm_nanovdb_dda(MAP_DECL,
     float tau = 0.0;
     float current_t = step_size * random(); // jittering
 
-    // seed the HDDA with the node size at the (jittered) entry point
     ivec3 ijk = ivec3(floor(idx_origin + idx_dir * current_t));
     int dim = int(pnanovdb_readaccessor_get_dim(grid_type, buf, acc, ijk));
 

@@ -1,13 +1,4 @@
 """
-Visual sanity check for a single grid/raymarching implementation: shows a slice
-of the source volume, then the rendered transmittance image.
-
-Merges what used to be check_transmittance.py, check_transmittance_nanovdb.py,
-check_transmittance_nanovdb_dda.py and check_transmittance_twolevel_dda.py into
-one script selected by --variant. (check_transmittance_twolevel.py is dropped,
-not merged: it referenced TwoLevelGrid3DPadding / create_two_level_grid_with_apron,
-both removed from grid_implementations.py / utility.py in a prior refactor.)
-
 Usage:
     python check_transmittance.py --variant dense
     python check_transmittance.py --variant nanovdb_dda --volume disney_cloud
