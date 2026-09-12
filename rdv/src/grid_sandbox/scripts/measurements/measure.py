@@ -190,21 +190,17 @@ def measure(variant, volume, block_size, mode="render", warmup=5, iters=25):
         total_blocks = (D // block_size) * (H // block_size) * (W // block_size)
 
     with torch.no_grad():
-        torch.cuda.nvtx.range_push("warmup")
         for _ in range(warmup):
             call()
         torch.cuda.synchronize()
-        torch.cuda.nvtx.range_pop()
 
         times_ms = []
         for i in range(iters):
             torch.cuda.synchronize()
-            torch.cuda.nvtx.range_push(f"measured_{i}")
             t0 = time.perf_counter()
             call()
             torch.cuda.synchronize()
             times_ms.append((time.perf_counter() - t0) * 1000.0)
-            torch.cuda.nvtx.range_pop()
 
     times_ms = np.array(times_ms)
     return dict(
@@ -233,7 +229,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--variant", choices=VARIANTS, required=True)
     parser.add_argument("--mode", choices=MODES, default="render")
-    parser.add_argument("--volume", default="cloud_356")
+    parser.add_argument("--volume", default="cloud_760")
     parser.add_argument("--block-size", type=int, default=8)
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--iters", type=int, default=3)
