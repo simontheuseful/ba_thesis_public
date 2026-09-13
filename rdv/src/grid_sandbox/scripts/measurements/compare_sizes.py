@@ -14,8 +14,8 @@ from utility import load_pt_volume, create_two_level_grid, create_two_level_grid
 
 DATA_DIR = os.path.join(_HERE, "..", "..", "data")
 
-BLOCK_SIZE = 32  # .nvdb files are cropped to a multiple of 32 (see nvdb_converter.py)
-TWO_LEVEL_BLOCK_SIZES = [1, 2, 4, 8, 16, 32]
+BLOCK_SIZE = 32  # .nvdb files are cropped to a multiple of 32
+TWO_LEVEL_BLOCK_SIZES = [2, 4, 8, 16, 32]
 
 
 def mib(n_bytes):

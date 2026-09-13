@@ -189,6 +189,7 @@ def measure(variant, volume, block_size, mode="render", warmup=5, iters=25):
         active_blocks = block_pool.shape[0] - 1  # block_pool[0] is the reserved empty block
         total_blocks = (D // block_size) * (H // block_size) * (W // block_size)
 
+    # this is the actual measuring functionality
     with torch.no_grad():
         for _ in range(warmup):
             call()

@@ -63,7 +63,7 @@ def create_two_level_grid(cloud_tensor: torch.Tensor, block_size: int = 8):
 
     return macro_grid_rdv, block_pool_rdv
 
-
+# help from claude as this had to be done in numpy for runtime
 def create_two_level_grid_padded(cloud_tensor: torch.Tensor, block_size: int = 8):
     spatial_dims = cloud_tensor.shape[:3]
 
