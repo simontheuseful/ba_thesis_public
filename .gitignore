@@ -8,7 +8,8 @@ __pycache__/
 
 # measurement outputs, regenerated locally, not needed in the repo
 rdv/src/grid_sandbox/diagrams/
-rdv/src/grid_sandbox/data/
+rdv/src/grid_sandbox/data/*
+!rdv/src/grid_sandbox/data/disclaimer.txt
 
 # compiled shader artifacts, rebuilt on every run
 *.spv

@@ -1,0 +1,2 @@
+The `data/` folder is not included in this repository due to file size. The original `.pt` and `.nvdb` cloud volumes used for all measurements in the thesis are available here:
+https://syncandshare.lrz.de/getlink/fiWEeHFbALiBSC1x4B89sP/
