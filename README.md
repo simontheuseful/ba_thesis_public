@@ -2,6 +2,8 @@
 
 This repository contains the code and resources for the bachelor's thesis *"Volumetric Data Structures for Ray Marching Clouds on the GPU: Implementation and Comparative Analysis of a Dense Grid, a Two-Level Sparse Grid, and NanoVDB."*
 
+The thesis `thesis.pdf` can be found within the root directory.
+
 ## Repository Structure
 
 ```
