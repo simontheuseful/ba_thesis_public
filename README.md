@@ -10,6 +10,10 @@ rdv/src/grid_sandbox/
 └── scripts/    Python scripts for measurements and RDV map classes
 ```
 
+## Architecture
+
+![Data flow of the shared rendering pipeline](docs/architecture.png)
+
 ## Scripts
 
 - `measurements/compare_sizes.py`: compares memory footprint for all three representations and calculates active voxels
