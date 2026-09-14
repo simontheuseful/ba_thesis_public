@@ -47,3 +47,7 @@ rdv/src/grid_sandbox/
 The `data/` folder is not included in this repository due to file size. The original `.pt` and `.nvdb` cloud volumes used for all measurements in the thesis are available here:
 
 [**Download cloud files (LRZ Sync+Share)**](https://syncandshare.lrz.de/getlink/fiWEeHFbALiBSC1x4B89sP/)
+
+## Acknowledgements
+
+This thesis builds on *Rendervous (rdv)* and *vulky*, both created by [Ludwic Leonard](https://github.com/lleonart1984).
